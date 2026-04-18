@@ -4,7 +4,9 @@ import { createLinkedInContext } from "./browser.js";
 import {
   LinkedInProfileExport,
   ExperienceItem,
-  EducationItem
+  EducationItem,
+  CertificationItem,
+  LanguageItem
 } from "./types";
 
 function sanitizeInlineText(text: string): string {
@@ -199,10 +201,14 @@ async function findSectionByTitle(page: Page, titles: string[]): Promise<Locator
   for (let i = 0; i < count; i++) {
     const section = sections.nth(i);
     const raw = await rawTextOrEmpty(section);
-    const lines = splitLines(raw);
-    const firstLine = lines[0] ?? "";
+    const firstLine = splitLines(raw)[0] ?? "";
 
-    if (titles.some((title) => firstLine.toLowerCase().includes(title.toLowerCase()))) {
+    if (
+      titles.some((title) =>
+        firstLine.toLowerCase() === title.toLowerCase() ||
+        firstLine.toLowerCase().startsWith(title.toLowerCase())
+      )
+    ) {
       return section;
     }
   }
@@ -419,6 +425,119 @@ async function extractEducation(page: Page): Promise<EducationItem[]> {
   }
 }
 
+
+// ---------------- CERTIFICATION ----------------
+
+function cleanCertifications(items: CertificationItem[]): CertificationItem[] {
+  return items
+    .map((item) => {
+      let name = item.name.trim();
+      let issuer = item.issuer.trim();
+      let issue_date = item.issue_date;
+
+      // Se name è "LinkedIn" → probabilmente è issuer
+      if (name.toLowerCase() === "linkedin") {
+        return null;
+      }
+
+      // Se issuer contiene "Data di rilascio" → spostalo
+      if (issuer.toLowerCase().includes("data di rilascio")) {
+        issue_date = issuer;
+        issuer = "";
+      }
+
+      // Se issuer sembra un titolo (non azienda) → swap
+      if (
+        issuer &&
+        !issuer.toLowerCase().includes("linkedin") &&
+        issuer.length > 40
+      ) {
+        // probabilmente è un'altra certificazione
+        return null;
+      }
+
+      return {
+        name: name.replace(/^LinkedIn\s*/i, "").trim(),
+        issuer: issuer,
+        issue_date: issue_date,
+        credential_id: ""
+      };
+    })
+    .filter((x): x is CertificationItem => x !== null)
+    .filter((x) => x.name.length > 5);
+}
+async function extractCertifications(page: Page): Promise<CertificationItem[]> {
+  const section = await findSectionByTitle(page, ["Licenze e certificazioni", "Licenses & certifications"]);
+  if (!section) return [];
+
+  const raw = await rawTextOrEmpty(section);
+  const lines = cleanLines(splitLines(raw)).filter(
+    (line) =>
+      !line.toLowerCase().startsWith("licenze e certificazioni") &&
+      !line.toLowerCase().startsWith("licenses & certifications") &&
+      !line.includes("Mostra credenziale") &&
+      !line.includes("Show credential") &&
+      !line.includes("Mostra tutto")
+  );
+
+  const results: CertificationItem[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const name = lines[i] ?? "";
+    const issuer = lines[i + 1] ?? "";
+    const maybeDate = lines[i + 2] ?? "";
+
+    if (!name || name.length < 3) {
+      i++;
+      continue;
+    }
+
+    const issue_date = /Data di rilascio|Issued/i.test(maybeDate) ? maybeDate : "";
+
+    results.push({
+      name: sanitizeInlineText(name),
+      issuer: sanitizeInlineText(issuer),
+      issue_date: sanitizeInlineText(issue_date),
+      credential_id: ""
+    });
+
+    i += issue_date ? 3 : 2;
+  }
+
+  return cleanCertifications(results);
+}
+
+// ---------------- LANGUAGES ----------------
+async function extractLanguages(page: Page): Promise<LanguageItem[]> {
+  const section = await findSectionByTitle(page, ["Lingue", "Languages"]);
+  if (!section) return [];
+
+  const raw = await rawTextOrEmpty(section);
+  const lines = cleanLines(splitLines(raw)).filter(
+    (line) =>
+      line !== "Lingue" &&
+      line !== "Languages" &&
+      !line.includes("Mostra tutto")
+  );
+
+  const results: LanguageItem[] = [];
+
+  for (let i = 0; i < lines.length; i += 2) {
+    const name = lines[i] ?? "";
+    const proficiency = lines[i + 1] ?? "";
+
+    if (!name) continue;
+
+    results.push({
+      name: sanitizeInlineText(name),
+      proficiency: sanitizeInlineText(proficiency)
+    });
+  }
+
+  return results.filter((x) => x.name.length > 1);
+}
+
 // ---------------- SKILLS ----------------
 
 async function extractSkills(page: Page): Promise<string[]> {
@@ -498,7 +617,17 @@ export async function extractLinkedInProfile(profileUrl: string): Promise<Linked
     const about = await extractAbout(page);
     const experience = await extractExperience(page);
     const education = await extractEducation(page);
+    const certifications = await extractCertifications(page);
     const skills = await extractSkills(page);
+    const languages = await extractLanguages(page);
+
+    console.log("\n=== CERTIFICATIONS DEBUG ===");
+    console.log(certifications);
+    console.log("=== END CERTIFICATIONS DEBUG ===\n");
+
+    console.log("\n=== LANGUAGES DEBUG ===");
+    console.log(languages);
+    console.log("=== END LANGUAGES DEBUG ===\n");
 
     return {
       ...core,
@@ -516,7 +645,8 @@ export async function extractLinkedInProfile(profileUrl: string): Promise<Linked
       experience,
       education,
       skills,
-      certifications: [],
+      certifications,
+      languages,
       featured: [],
       recent_posts: []
     };
@@ -524,7 +654,6 @@ export async function extractLinkedInProfile(profileUrl: string): Promise<Linked
     await context.close().catch(() => null);
   }
 }
-
 async function debugScrollableContainers(page: Page): Promise<void> {
   const containers = await page.evaluate(() => {
     const all = Array.from(document.querySelectorAll("*"));

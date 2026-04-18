@@ -70,6 +70,20 @@ export interface LinkedInProfileExport {
   education: EducationItem[];
   skills: string[];
   certifications: CertificationItem[];
+  languages: LanguageItem[];
   featured: FeaturedItem[];
   recent_posts: RecentPostItem[];
+}
+
+
+export interface CertificationItem {
+  name: string;
+  issuer: string;
+  issue_date: string;
+  credential_id: string;
+}
+
+export interface LanguageItem {
+  name: string;
+  proficiency: string;
 }
