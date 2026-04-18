@@ -1,0 +1,43 @@
+{
+  "profile_metadata": {
+    "full_name": "Alessandro Bacioccola",
+    "linkedin_url": "https://www.linkedin.com/in/alessandro-bacioccola/",
+    "extracted_at": "2026-04-18T10:00:00.000Z",
+    "source": "linkedin_playwright_mcp"
+  },
+  "branding_context": {
+    "target_positioning": "VP Software Engineering with evolution toward broader R&D executive leadership",
+    "core_topics": [
+      "software engineering leadership",
+      "organizational effectiveness",
+      "AI adoption in software teams",
+      "fuel retail technology",
+      "leadership and people development",
+      "innovation and transformation"
+    ],
+    "tone_of_voice": "professional but informal",
+    "audience": [
+      "engineering leaders",
+      "technology managers",
+      "fuel retail professionals",
+      "future leaders"
+    ],
+    "do_not_emphasize": [
+      "internal sensitive organizational details",
+      "unclear strategic messages",
+      "overly promotional language"
+    ]
+  },
+  "profile_core": {
+    "headline": "VP Software Engineering | Fuel Retail Tech | Leadership | Innovation",
+    "location": "Florence, Tuscany, Italy",
+    "industry": "Software Development",
+    "about": "Example only. Replace with extracted content."
+  },
+  "experience": [],
+  "education": [],
+  "skills": [],
+  "certifications": [],
+  "featured": [],
+  "recent_posts": []
+}

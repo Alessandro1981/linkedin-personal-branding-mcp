@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.playwright/
+exports/*.json
+!exports/.gitkeep
+state.json
+.env
+.DS_Store
