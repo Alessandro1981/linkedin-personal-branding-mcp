@@ -1,283 +1,477 @@
-import type { BrowserContext, Locator, Page } from 'playwright';
-import { createLinkedInContext } from './browser.js';
-import type { LinkedInProfileExport, ExperienceItem, EducationItem, RecentPostItem, FeaturedItem } from './types.js';
-import { sanitizeText, sanitizeMultilineText, splitHighlights } from './utils.js';
+import type { Page, Locator } from "playwright";
+import { createLinkedInContext } from "./browser.js";
 
-const DEFAULT_BRANDING_CONTEXT = {
-  target_positioning: 'VP Software Engineering with evolution toward broader R&D executive leadership',
-  core_topics: [
-    'software engineering leadership',
-    'organizational effectiveness',
-    'AI adoption in software teams',
-    'fuel retail technology',
-    'leadership and people development',
-    'innovation and transformation'
-  ],
-  tone_of_voice: 'professional but informal',
-  audience: [
-    'engineering leaders',
-    'technology managers',
-    'fuel retail professionals',
-    'future leaders'
-  ],
-  do_not_emphasize: [
-    'internal sensitive organizational details',
-    'unclear strategic messages',
-    'overly promotional language'
-  ]
-} as const;
+import {
+  LinkedInProfileExport,
+  ExperienceItem,
+  EducationItem
+} from "./types";
+
+function sanitizeText(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
 
 async function textOrEmpty(locator: Locator): Promise<string> {
   try {
-    const count = await locator.count();
-    if (count === 0) return '';
-    return sanitizeMultilineText(await locator.first().innerText({ timeout: 3000 }));
+    const txt = await locator.textContent();
+    return txt ? sanitizeText(txt) : "";
   } catch {
-    return '';
+    return "";
   }
 }
 
-async function hrefOrEmpty(locator: Locator): Promise<string> {
-  try {
-    const count = await locator.count();
-    if (count === 0) return '';
-    return sanitizeText(await locator.first().getAttribute('href'));
-  } catch {
-    return '';
-  }
+function splitLines(text: string): string[] {
+  return text
+    .split("\n")
+    .map((l) => sanitizeText(l))
+    .filter(Boolean);
 }
 
-async function loadPage(context: BrowserContext, profileUrl: string): Promise<Page> {
-  const page = await context.newPage();
-  await page.goto(profileUrl, { waitUntil: 'domcontentloaded' });
-  await page.waitForTimeout(1500);
-  return page;
-}
-
-async function extractCore(page: Page): Promise<Pick<LinkedInProfileExport, 'profile_metadata' | 'profile_core'>> {
-  const fullName = await textOrEmpty(page.locator('h1'));
-  const headline = await textOrEmpty(page.locator('.text-body-medium').first());
-
-  const topSectionText = await textOrEmpty(page.locator('main section').first());
-  const topLines = topSectionText.split('\n').filter(Boolean);
-  const location = topLines.find((line) => line.includes(',') || /area|province|metropolitan/i.test(line)) ?? '';
-
-  return {
-    profile_metadata: {
-      full_name: fullName,
-      linkedin_url: page.url(),
-      extracted_at: new Date().toISOString(),
-      source: 'linkedin_playwright_mcp'
-    },
-    profile_core: {
-      headline,
-      location,
-      industry: '',
-      about: ''
-    }
-  };
-}
-
-async function maybeOpenSection(page: Page, sectionTitle: string): Promise<Page> {
-  const links = page.locator(`a:has-text("Show all ${sectionTitle}")`);
-  if ((await links.count()) > 0) {
-    await Promise.all([
-      page.waitForEvent('popup').catch(() => null),
-      links.first().click().catch(() => null)
-    ]);
-  }
-
-  const pages = page.context().pages();
-  return pages[pages.length - 1] ?? page;
-}
-
-async function extractAbout(page: Page): Promise<string> {
-  const aboutSection = page.locator('section').filter({ has: page.locator('#about, div[id*=about]') }).first();
-  let about = await textOrEmpty(aboutSection.locator('.display-flex.ph5.pv3, .full-width[dir="ltr"], .inline-show-more-text').first());
-
-  if (!about) {
-    const pageWithAbout = await maybeOpenSection(page, 'about');
-    about = await textOrEmpty(pageWithAbout.locator('main'));
-    if (pageWithAbout !== page) await pageWithAbout.close().catch(() => null);
-  }
-
-  return about;
-}
-
-async function extractExperience(page: Page): Promise<ExperienceItem[]> {
-  const results: ExperienceItem[] = [];
-  const pageWithExperience = await maybeOpenSection(page, 'experiences');
-  const items = pageWithExperience.locator('main li, section li');
-  const count = Math.min(await items.count(), 12);
-
-  for (let i = 0; i < count; i += 1) {
-    const item = items.nth(i);
-    const text = await textOrEmpty(item);
-    if (!text || text.length < 12) continue;
-
-    const lines = text.split('\n').map((line) => sanitizeText(line)).filter(Boolean);
-    const role = lines[0] ?? '';
-    const company = lines[1] ?? '';
-    const datesLine = lines.find((line) => /\d{4}|Present|Presente|attuale/i.test(line)) ?? '';
-    const locationLine = lines.find((line) => /Remote|On-site|Hybrid|Italy|Italia|Europe|Europa/i.test(line)) ?? '';
-    const description = lines.slice(3).join('\n');
-
-    results.push({
-      company,
-      role,
-      employment_type: '',
-      start_date: datesLine,
-      end_date: '',
-      location: locationLine,
-      description,
-      highlights: splitHighlights(description)
-    });
-  }
-
-  if (pageWithExperience !== page) await pageWithExperience.close().catch(() => null);
-  return dedupeExperience(results);
+function splitHighlights(text: string): string[] {
+  return splitLines(text).filter((l) => l.length > 0 && l.length < 200);
 }
 
 function dedupeExperience(items: ExperienceItem[]): ExperienceItem[] {
   const seen = new Set<string>();
-  return items.filter((item) => {
-    const key = `${item.role}|${item.company}|${item.start_date}`.toLowerCase();
+  return items.filter((i) => {
+    const key = `${i.company}-${i.role}-${i.start_date}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
 }
 
-async function extractEducation(page: Page): Promise<EducationItem[]> {
-  const results: EducationItem[] = [];
-  const pageWithEducation = await maybeOpenSection(page, 'education');
-  const items = pageWithEducation.locator('main li, section li');
-  const count = Math.min(await items.count(), 8);
+function isNoiseLine(line: string): boolean {
+  const lower = line.toLowerCase();
 
-  for (let i = 0; i < count; i += 1) {
-    const text = await textOrEmpty(items.nth(i));
-    if (!text || text.length < 12) continue;
-    const lines = text.split('\n').map((line) => sanitizeText(line)).filter(Boolean);
-    results.push({
-      school: lines[0] ?? '',
-      degree: lines[1] ?? '',
-      field_of_study: lines[2] ?? '',
-      start_date: lines.find((line) => /\d{4}/.test(line)) ?? '',
-      end_date: '',
-      description: lines.slice(3).join('\n')
-    });
-  }
+  const noiseFragments = [
+    "video player",
+    "play video",
+    "skip backward",
+    "skip forward",
+    "mute",
+    "current time",
+    "duration",
+    "loaded:",
+    "stream type",
+    "seek to live",
+    "remaining time",
+    "playback rate",
+    "chapters",
+    "descriptions",
+    "descriptions off",
+    "subtitles",
+    "subtitles settings",
+    "audio track",
+    "picture-in-picture",
+    "fullscreen",
+    "modal window",
+    "dialog window",
+    "escape will cancel",
+    "textcolor",
+    "text backgroundcolor",
+    "caption area backgroundcolor",
+    "font size",
+    "text edge style",
+    "font family",
+    "reset",
+    "done",
+    "close modal dialog",
+    "invia messaggio",
+    "collegati",
+    "mostra tutto",
+    "visibile solo a te",
+    "persone che potresti conoscere",
+    "pagine per te",
+    "privacy e condizioni",
+    "opzioni per gli annunci pubblicitari",
+    "centro sicurezza",
+    "linkedin corporation",
+    "domande?",
+    "visita il nostro centro assistenza",
+    "gestisci il tuo account e la tua privacy",
+    "vai alle impostazioni",
+    "trasparenza sui contenuti consigliati",
+    "seleziona lingua",
+    "consiglia",
+    "commenta",
+    "diffondi il post",
+    "visualizza offerta di lavoro",
+    "ha diffuso questo post"
+  ];
 
-  if (pageWithEducation !== page) await pageWithEducation.close().catch(() => null);
-  return results;
+  return noiseFragments.some((fragment) => lower.includes(fragment));
 }
 
-async function extractFeatured(page: Page): Promise<FeaturedItem[]> {
-  const featured: FeaturedItem[] = [];
-  const section = page.locator('section').filter({ hasText: 'Featured' }).first();
-  const cards = section.locator('a[href]');
-  const count = Math.min(await cards.count(), 6);
-
-  for (let i = 0; i < count; i += 1) {
-    const card = cards.nth(i);
-    const title = await textOrEmpty(card);
-    const url = await hrefOrEmpty(card);
-    if (!title && !url) continue;
-
-    featured.push({
-      type: url.includes('/posts/') ? 'post' : url.includes('/pulse/') ? 'article' : 'link',
-      title: title.split('\n')[0] ?? '',
-      url,
-      date: '',
-      summary: title
-    });
-  }
-
-  return featured;
+function cleanLines(lines: string[]): string[] {
+  return lines.filter((line) => {
+    if (!line) return false;
+    if (line.length > 500) return false;
+    if (isNoiseLine(line)) return false;
+    return true;
+  });
 }
 
-async function extractSkills(page: Page): Promise<string[]> {
-  const skillsPage = await maybeOpenSection(page, 'skills');
-  const candidates = skillsPage.locator('main span[aria-hidden="true"], section span[aria-hidden="true"]');
-  const count = Math.min(await candidates.count(), 80);
-  const skills = new Set<string>();
+async function getProfileRoot(page: Page): Promise<Locator> {
+  return page.locator("main").first();
+}
 
-  for (let i = 0; i < count; i += 1) {
-    const value = sanitizeText(await candidates.nth(i).innerText().catch(() => ''));
-    if (value && value.length > 2 && value.length < 60) {
-      skills.add(value);
+async function autoScrollProfile(page: Page): Promise<void> {
+  await page.setViewportSize({ width: 1440, height: 2200 });
+
+  await page.evaluate(async () => {
+    await new Promise<void>((resolve) => {
+      let totalHeight = 0;
+      const distance = 800;
+      const timer = setInterval(() => {
+        const scrollHeight = document.body.scrollHeight;
+        window.scrollBy(0, distance);
+        totalHeight += distance;
+
+        if (totalHeight >= scrollHeight) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, 600);
+    });
+  });
+
+  await page.waitForTimeout(2500);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(1200);
+}
+
+async function findSectionByTitle(page: Page, titles: string[]): Promise<Locator | null> {
+  const root = await getProfileRoot(page);
+  const sections = root.locator("section");
+  const count = await sections.count();
+
+  for (let i = 0; i < count; i++) {
+    const section = sections.nth(i);
+
+    const headingTexts = await section
+      .locator("h2, h3, span[aria-hidden='true'], div[aria-hidden='true']")
+      .evaluateAll((els) =>
+        els.map((el) => (el.textContent || "").trim()).filter(Boolean)
+      );
+
+    const normalized = headingTexts.map((t) => t.toLowerCase());
+
+    if (
+      titles.some((title) =>
+        normalized.some(
+          (h) => h === title.toLowerCase() || h.includes(title.toLowerCase())
+        )
+      )
+    ) {
+      return section;
     }
   }
 
-  if (skillsPage !== page) await skillsPage.close().catch(() => null);
-  return Array.from(skills).slice(0, 30);
+  return null;
 }
 
-async function extractRecentPosts(page: Page): Promise<RecentPostItem[]> {
-  const results: RecentPostItem[] = [];
-  const activityLink = page.locator('a[href*="/details/recent-activity/"]').first();
-  if ((await activityLink.count()) === 0) return results;
+async function maybeOpenSection(page: Page, sectionTitle: string): Promise<Page> {
+  const linkTexts = [
+    `Show all ${sectionTitle}`,
+    `Mostra tutti i ${sectionTitle}`,
+    `Mostra tutte le ${sectionTitle}`
+  ];
 
-  await Promise.all([
-    page.waitForEvent('popup').catch(() => null),
-    activityLink.click().catch(() => null)
-  ]);
+  for (const text of linkTexts) {
+    const links = page.locator(`a:has-text("${text}")`);
+    if ((await links.count()) > 0) {
+      const popupPromise = page.waitForEvent("popup").catch(() => null);
+      await links.first().click().catch(() => null);
+      const popup = await popupPromise;
 
-  const pages = page.context().pages();
-  const activityPage = pages[pages.length - 1];
-  if (!activityPage || activityPage === page) return results;
+      if (popup) {
+        await popup.waitForLoadState("domcontentloaded").catch(() => null);
+        return popup;
+      }
 
-  await activityPage.waitForLoadState('domcontentloaded');
-  await activityPage.waitForTimeout(1200);
-
-  const items = activityPage.locator('main .feed-shared-update-v2, main li');
-  const count = Math.min(await items.count(), 5);
-  for (let i = 0; i < count; i += 1) {
-    const item = items.nth(i);
-    const text = await textOrEmpty(item);
-    if (!text) continue;
-    const link = await hrefOrEmpty(item.locator('a[href*="/posts/"]'));
-    results.push({
-      date: '',
-      url: link,
-      text,
-      engagement_hint: ''
-    });
+      const pages = page.context().pages();
+      return pages[pages.length - 1] ?? page;
+    }
   }
 
-  await activityPage.close().catch(() => null);
-  return results;
+  return page;
 }
+
+// ---------------- CORE ----------------
+
+async function extractCore(page: Page) {
+  const root = await getProfileRoot(page);
+  const topSection = root.locator("section").first();
+
+  const fullName = await textOrEmpty(topSection.locator("h1").first());
+
+  const raw = await textOrEmpty(topSection);
+  const lines = cleanLines(splitLines(raw));
+
+  const headline =
+    lines.find(
+      (line) =>
+        /vp|vice president|engineering|software|technology/i.test(line) &&
+        !line.includes("Video Player") &&
+        line !== fullName
+    ) ?? "";
+
+  const location =
+    lines.find((line) =>
+      /firenze|toscana|italia|italy|europe|europa/i.test(line)
+    ) ?? "";
+
+  return {
+    profile_metadata: {
+      full_name: fullName,
+      linkedin_url: page.url(),
+      extracted_at: new Date().toISOString(),
+      source: "linkedin_playwright_mcp"
+    },
+    profile_core: {
+      headline: sanitizeText(headline),
+      location: sanitizeText(location.replace(/·.*$/, "")),
+      industry: "",
+      about: ""
+    }
+  };
+}
+
+// ---------------- ABOUT ----------------
+
+async function extractAbout(page: Page): Promise<string> {
+  const root = await getProfileRoot(page);
+  const sections = root.locator("section");
+  const count = await sections.count();
+
+  for (let i = 0; i < count; i++) {
+    const section = sections.nth(i);
+    const raw = await textOrEmpty(section);
+
+    if (!raw.includes("Informazioni") && !raw.includes("About")) {
+      continue;
+    }
+
+    const lines = splitLines(raw);
+    const cleaned = cleanLines(lines).filter(
+      (line) =>
+        line !== "Informazioni" &&
+        line !== "About" &&
+        !line.includes("Mostra altro") &&
+        !line.includes("Mostra meno")
+    );
+
+    return cleaned.join("\n").trim();
+  }
+
+  return "";
+}
+
+// ---------------- EXPERIENCE ----------------
+
+async function extractExperience(page: Page): Promise<ExperienceItem[]> {
+  const pageWithExp = await maybeOpenSection(page, "experiences");
+
+  try {
+    const section = await findSectionByTitle(pageWithExp, ["Esperienza", "Experience"]);
+    if (!section) return [];
+
+    const items = section.locator("li");
+    const count = Math.min(await items.count(), 12);
+
+    const results: ExperienceItem[] = [];
+
+    for (let i = 0; i < count; i++) {
+      const text = await textOrEmpty(items.nth(i));
+      if (!text || text.length < 20) continue;
+
+      const lines = cleanLines(splitLines(text));
+      if (lines.length < 2) continue;
+
+      const joined = lines.join(" ").toLowerCase();
+      if (
+        joined.includes("ha diffuso questo post") ||
+        joined.includes("consiglia") ||
+        joined.includes("commenta") ||
+        joined.includes("diffondi il post") ||
+        joined.includes("visualizza offerta di lavoro")
+      ) {
+        continue;
+      }
+
+      const role = lines[0] ?? "";
+      const company = lines[1] ?? "";
+
+      const date = lines.find((l) => /\d{4}|Present|Presente/.test(l)) ?? "";
+      const location = lines.find((l) =>
+        /Italia|Italy|Remote|Hybrid|On-site|Europe|Europa|Toscana|Firenze/i.test(l)
+      ) ?? "";
+
+      const description = lines
+        .filter((l) => l !== role && l !== company && l !== date && l !== location)
+        .join("\n");
+
+      results.push({
+        company,
+        role,
+        employment_type: "",
+        start_date: date,
+        end_date: "",
+        location,
+        description,
+        highlights: splitHighlights(description)
+      });
+    }
+
+    return dedupeExperience(results);
+  } finally {
+    if (pageWithExp !== page) {
+      await pageWithExp.close().catch(() => null);
+    }
+  }
+}
+
+// ---------------- EDUCATION ----------------
+
+async function extractEducation(page: Page): Promise<EducationItem[]> {
+  const pageWithEdu = await maybeOpenSection(page, "education");
+
+  try {
+    const section = await findSectionByTitle(pageWithEdu, ["Formazione", "Education"]);
+    if (!section) return [];
+
+    const items = section.locator("li");
+    const count = Math.min(await items.count(), 8);
+
+    const results: EducationItem[] = [];
+
+    for (let i = 0; i < count; i++) {
+      const text = await textOrEmpty(items.nth(i));
+      if (!text) continue;
+
+      const lines = cleanLines(splitLines(text));
+      if (lines.length < 1) continue;
+
+      const joined = lines.join(" ").toLowerCase();
+      if (
+        joined.includes("ha diffuso questo post") ||
+        joined.includes("consiglia") ||
+        joined.includes("commenta") ||
+        joined.includes("diffondi il post") ||
+        joined.includes("visualizza offerta di lavoro")
+      ) {
+        continue;
+      }
+
+      results.push({
+        school: lines[0] ?? "",
+        degree: lines[1] ?? "",
+        field_of_study: lines[2] ?? "",
+        start_date: lines.find((l) => /\d{4}/.test(l)) ?? "",
+        end_date: "",
+        description: lines.slice(3).join("\n")
+      });
+    }
+
+    return results;
+  } finally {
+    if (pageWithEdu !== page) {
+      await pageWithEdu.close().catch(() => null);
+    }
+  }
+}
+
+// ---------------- SKILLS ----------------
+
+async function extractSkills(page: Page): Promise<string[]> {
+  const pageWithSkills = await maybeOpenSection(page, "skills");
+
+  try {
+    const section = await findSectionByTitle(pageWithSkills, ["Competenze", "Skills"]);
+    if (!section) return [];
+
+    const items = section.locator("li");
+    const count = Math.min(await items.count(), 40);
+
+    const skills = new Set<string>();
+
+    for (let i = 0; i < count; i++) {
+      const text = await textOrEmpty(items.nth(i));
+      if (!text) continue;
+
+      const lines = cleanLines(splitLines(text));
+      const first = lines[0] ?? "";
+
+      if (
+        first &&
+        first.length > 1 &&
+        first.length < 80 &&
+        !/commenti|diffusioni|reazioni|post|follower/i.test(first)
+      ) {
+        skills.add(first);
+      }
+    }
+
+    return Array.from(skills).slice(0, 30);
+  } finally {
+    if (pageWithSkills !== page) {
+      await pageWithSkills.close().catch(() => null);
+    }
+  }
+}
+
+// ---------------- MAIN EXPORT ----------------
 
 export async function extractLinkedInProfile(profileUrl: string): Promise<LinkedInProfileExport> {
   const context = await createLinkedInContext();
+
   try {
-    const page = await loadPage(context, profileUrl);
+    const page = await context.newPage();
+    await page.goto(profileUrl, { waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(2000);
+
+    await autoScrollProfile(page);
+
+    const root = await getProfileRoot(page);
+    const sections = root.locator("section");
+    const sectionCount = await sections.count();
+
+    console.log("\n=== PROFILE SECTIONS DEBUG ===");
+    for (let i = 0; i < sectionCount; i++) {
+      const txt = await sections.nth(i).textContent();
+      console.log(`\n[SECTION ${i}]`);
+      console.log((txt || "").slice(0, 250));
+    }
+    console.log("\n=== END DEBUG ===\n");
+
     const core = await extractCore(page);
     const about = await extractAbout(page);
     const experience = await extractExperience(page);
     const education = await extractEducation(page);
-    const featured = await extractFeatured(page);
     const skills = await extractSkills(page);
-    const recent_posts = await extractRecentPosts(page);
-
-    await page.close();
 
     return {
       ...core,
-      branding_context: { ...DEFAULT_BRANDING_CONTEXT },
       profile_core: {
         ...core.profile_core,
         about
+      },
+      branding_context: {
+        target_positioning: "",
+        core_topics: [],
+        tone_of_voice: "",
+        audience: [],
+        do_not_emphasize: []
       },
       experience,
       education,
       skills,
       certifications: [],
-      featured,
-      recent_posts
+      featured: [],
+      recent_posts: []
     };
   } finally {
-    await context.close();
+    await context.close().catch(() => null);
   }
 }
