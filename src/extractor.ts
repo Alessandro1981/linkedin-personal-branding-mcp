@@ -538,6 +538,67 @@ async function extractLanguages(page: Page): Promise<LanguageItem[]> {
   return results.filter((x) => x.name.length > 1);
 }
 
+// ---------------- RECENT POST ----------------
+
+async function extractRecentPosts(page: Page): Promise<PostItem[]> {
+  const section = await findSectionByTitle(page, ["Attività", "Activity"]);
+  if (!section) return [];
+
+  const raw = await rawTextOrEmpty(section);
+
+  console.log("\n=== RAW ACTIVITY ===");
+  console.log(raw.slice(0, 2000));
+  console.log("=== END RAW ACTIVITY ===\n");
+
+  const lines = cleanLines(splitLines(raw));
+
+  const posts: PostItem[] = [];
+
+  let currentPost: string[] = [];
+
+  for (const line of lines) {
+    // segnali di separazione post
+    if (
+      line.includes("reazioni") ||
+      line.includes("commenti") ||
+      line.includes("diffusioni")
+    ) {
+      if (currentPost.length > 0) {
+        posts.push({
+          text: currentPost.join(" "),
+          engagement: line
+        });
+        currentPost = [];
+      }
+      continue;
+    }
+
+    // evita rumore
+    if (
+      line.includes("Crea un post") ||
+      line.includes("Post") ||
+      line.includes("Commenti") ||
+      line.includes("Immagini") ||
+      line.includes("Documenti")
+    ) {
+      continue;
+    }
+
+    currentPost.push(line);
+  }
+
+  // fallback ultimo post
+  if (currentPost.length > 0) {
+    posts.push({
+      text: currentPost.join(" "),
+      engagement: ""
+    });
+  }
+
+  // limita a 5 post
+  return posts.slice(0, 5);
+}
+
 // ---------------- SKILLS ----------------
 
 async function extractSkills(page: Page): Promise<string[]> {
@@ -587,6 +648,10 @@ export async function extractLinkedInProfile(profileUrl: string): Promise<Linked
     const root = await getProfileRoot(page);
     const sections = root.locator("section");
     const sectionCount = await sections.count();
+    const recent_posts = await extractRecentPosts(page);
+    console.log("\n=== POSTS DEBUG ===");
+    console.log(recent_posts);
+    console.log("=== END POSTS DEBUG ===\n");
 
     console.log("\n=== PROFILE SECTIONS DEBUG ===");
     for (let i = 0; i < sectionCount; i++) {
@@ -648,7 +713,7 @@ export async function extractLinkedInProfile(profileUrl: string): Promise<Linked
       certifications,
       languages,
       featured: [],
-      recent_posts: []
+      recent_posts,
     };
   } finally {
     await context.close().catch(() => null);
@@ -676,8 +741,9 @@ async function debugScrollableContainers(page: Page): Promise<void> {
       .filter((x) => x.scrollHeight > x.clientHeight + 200)
       .slice(0, 20);
   });
-
+  
   console.log("\n=== SCROLLABLE CONTAINERS DEBUG ===");
+  
   for (const c of containers) {
     console.log(c);
   }
