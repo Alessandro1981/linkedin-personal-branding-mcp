@@ -73,7 +73,7 @@ Once your profile is structured, you can:
 
 ---
 
-## 💡 Why this matters (VP perspective)
+## 💡 Why this matters 
 
 At senior leadership level, your profile is not a CV.
 
