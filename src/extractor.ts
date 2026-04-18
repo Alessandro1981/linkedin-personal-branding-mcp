@@ -7,23 +7,52 @@ import {
   EducationItem
 } from "./types";
 
-function sanitizeText(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
+function sanitizeInlineText(text: string): string {
+  return text.replace(/[ \t]+/g, " ").trim();
+}
+
+function normalizeMultilineText(text: string): string {
+  return text
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => sanitizeInlineText(line))
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function rawTextOrEmpty(locator: Locator): Promise<string> {
+  try {
+    const txt = await locator.innerText();
+    return txt ?? "";
+  } catch {
+    try {
+      const fallback = await locator.textContent();
+      return fallback ?? "";
+    } catch {
+      return "";
+    }
+  }
 }
 
 async function textOrEmpty(locator: Locator): Promise<string> {
   try {
-    const txt = await locator.textContent();
-    return txt ? sanitizeText(txt) : "";
+    const txt = await locator.innerText();
+    return txt ? sanitizeInlineText(txt) : "";
   } catch {
-    return "";
+    try {
+      const fallback = await locator.textContent();
+      return fallback ? sanitizeInlineText(fallback) : "";
+    } catch {
+      return "";
+    }
   }
 }
 
 function splitLines(text: string): string[] {
   return text
-    .split("\n")
-    .map((l) => sanitizeText(l))
+    .replace(/\r/g, "")
+    .split(/\n+/)
+    .map((l) => sanitizeInlineText(l))
     .filter(Boolean);
 }
 
@@ -112,33 +141,54 @@ function cleanLines(lines: string[]): string[] {
   });
 }
 
+function cleanExperienceField(text: string): string {
+  return text
+    .replace(/🌐|✔|🛠️|🔍/g, "")
+    .replace(/Responsabilità.*$/i, "")
+    .replace(/\+\d+ competenze?.*$/i, "")
+    .replace(/\d+ anni.*$/i, "")
+    .trim();
+}
+
 async function getProfileRoot(page: Page): Promise<Locator> {
   return page.locator("main").first();
 }
 
-async function autoScrollProfile(page: Page): Promise<void> {
+async function autoScrollMain(page: Page): Promise<void> {
   await page.setViewportSize({ width: 1440, height: 2200 });
 
   await page.evaluate(async () => {
-    await new Promise<void>((resolve) => {
-      let totalHeight = 0;
-      const distance = 800;
-      const timer = setInterval(() => {
-        const scrollHeight = document.body.scrollHeight;
-        window.scrollBy(0, distance);
-        totalHeight += distance;
+    const main = document.querySelector("main") as HTMLElement | null;
+    if (!main) return;
 
-        if (totalHeight >= scrollHeight) {
+    await new Promise<void>((resolve) => {
+      let previousTop = -1;
+      const distance = 800;
+
+      const timer = setInterval(() => {
+        main.scrollBy(0, distance);
+
+        const currentTop = main.scrollTop;
+        const maxTop = main.scrollHeight - main.clientHeight;
+
+        if (currentTop === previousTop || currentTop >= maxTop - 5) {
           clearInterval(timer);
           resolve();
         }
-      }, 600);
+
+        previousTop = currentTop;
+      }, 700);
     });
   });
 
-  await page.waitForTimeout(2500);
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await page.waitForTimeout(1200);
+  await page.waitForTimeout(3000);
+
+  await page.evaluate(() => {
+    const main = document.querySelector("main") as HTMLElement | null;
+    if (main) main.scrollTo(0, 0);
+  });
+
+  await page.waitForTimeout(1500);
 }
 
 async function findSectionByTitle(page: Page, titles: string[]): Promise<Locator | null> {
@@ -148,22 +198,11 @@ async function findSectionByTitle(page: Page, titles: string[]): Promise<Locator
 
   for (let i = 0; i < count; i++) {
     const section = sections.nth(i);
+    const raw = await rawTextOrEmpty(section);
+    const lines = splitLines(raw);
+    const firstLine = lines[0] ?? "";
 
-    const headingTexts = await section
-      .locator("h2, h3, span[aria-hidden='true'], div[aria-hidden='true']")
-      .evaluateAll((els) =>
-        els.map((el) => (el.textContent || "").trim()).filter(Boolean)
-      );
-
-    const normalized = headingTexts.map((t) => t.toLowerCase());
-
-    if (
-      titles.some((title) =>
-        normalized.some(
-          (h) => h === title.toLowerCase() || h.includes(title.toLowerCase())
-        )
-      )
-    ) {
+    if (titles.some((title) => firstLine.toLowerCase().includes(title.toLowerCase()))) {
       return section;
     }
   }
@@ -204,17 +243,29 @@ async function extractCore(page: Page) {
   const root = await getProfileRoot(page);
   const topSection = root.locator("section").first();
 
-  const fullName = await textOrEmpty(topSection.locator("h1").first());
+  let fullName = await textOrEmpty(topSection.locator("h1").first());
 
-  const raw = await textOrEmpty(topSection);
+  const raw = await rawTextOrEmpty(topSection);
+
+  console.log("\n=== TOP SECTION RAW ===");
+  console.log(raw.slice(0, 1200));
+  console.log("=== END TOP SECTION RAW ===\n");
+
   const lines = cleanLines(splitLines(raw));
+
+  if (!fullName) {
+    fullName =
+      lines.find((line) =>
+        /^[A-ZÀ-ÖØ-Ý][a-zà-öø-ÿ'’.-]+\s+[A-ZÀ-ÖØ-Ý][a-zà-öø-ÿ'’.-]+/.test(line)
+      ) ?? "";
+  }
 
   const headline =
     lines.find(
       (line) =>
         /vp|vice president|engineering|software|technology/i.test(line) &&
-        !line.includes("Video Player") &&
-        line !== fullName
+        line !== fullName &&
+        !isNoiseLine(line)
     ) ?? "";
 
   const location =
@@ -224,14 +275,14 @@ async function extractCore(page: Page) {
 
   return {
     profile_metadata: {
-      full_name: fullName,
+      full_name: sanitizeInlineText(fullName),
       linkedin_url: page.url(),
       extracted_at: new Date().toISOString(),
       source: "linkedin_playwright_mcp"
     },
     profile_core: {
-      headline: sanitizeText(headline),
-      location: sanitizeText(location.replace(/·.*$/, "")),
+      headline: sanitizeInlineText(location === headline ? "" : headline),
+      location: sanitizeInlineText(location.replace(/·.*$/, "")),
       industry: "",
       about: ""
     }
@@ -241,95 +292,73 @@ async function extractCore(page: Page) {
 // ---------------- ABOUT ----------------
 
 async function extractAbout(page: Page): Promise<string> {
-  const root = await getProfileRoot(page);
-  const sections = root.locator("section");
-  const count = await sections.count();
+  const section = await findSectionByTitle(page, ["Informazioni", "About"]);
+  if (!section) return "";
 
-  for (let i = 0; i < count; i++) {
-    const section = sections.nth(i);
-    const raw = await textOrEmpty(section);
+  const raw = await rawTextOrEmpty(section);
+  const lines = cleanLines(splitLines(raw)).filter(
+    (line) =>
+      line !== "Informazioni" &&
+      line !== "About" &&
+      !line.includes("Mostra altro") &&
+      !line.includes("Mostra meno")
+  );
 
-    if (!raw.includes("Informazioni") && !raw.includes("About")) {
-      continue;
-    }
-
-    const lines = splitLines(raw);
-    const cleaned = cleanLines(lines).filter(
-      (line) =>
-        line !== "Informazioni" &&
-        line !== "About" &&
-        !line.includes("Mostra altro") &&
-        !line.includes("Mostra meno")
-    );
-
-    return cleaned.join("\n").trim();
-  }
-
-  return "";
+  return lines.join("\n").trim();
 }
 
 // ---------------- EXPERIENCE ----------------
 
 async function extractExperience(page: Page): Promise<ExperienceItem[]> {
-  const pageWithExp = await maybeOpenSection(page, "experiences");
+  const section = await findSectionByTitle(page, ["Esperienza", "Experience"]);
+  if (!section) return [];
 
-  try {
-    const section = await findSectionByTitle(pageWithExp, ["Esperienza", "Experience"]);
-    if (!section) return [];
+  const raw = await rawTextOrEmpty(section);
 
-    const items = section.locator("li");
-    const count = Math.min(await items.count(), 12);
+  const lines = cleanLines(splitLines(raw)).filter(
+    (line) =>
+      line !== "Esperienza" &&
+      !line.includes("A tempo pieno") &&
+      !line.includes("Ibrida")
+  );
 
-    const results: ExperienceItem[] = [];
+  console.log("\n=== EXPERIENCE CLEAN ===");
+  lines.forEach((l) => console.log(l));
+  console.log("=== END EXPERIENCE CLEAN ===\n");
 
-    for (let i = 0; i < count; i++) {
-      const text = await textOrEmpty(items.nth(i));
-      if (!text || text.length < 20) continue;
+  const results: ExperienceItem[] = [];
 
-      const lines = cleanLines(splitLines(text));
-      if (lines.length < 2) continue;
+  const company = lines[0] ?? "";
 
-      const joined = lines.join(" ").toLowerCase();
-      if (
-        joined.includes("ha diffuso questo post") ||
-        joined.includes("consiglia") ||
-        joined.includes("commenta") ||
-        joined.includes("diffondi il post") ||
-        joined.includes("visualizza offerta di lavoro")
-      ) {
-        continue;
-      }
+  for (let i = 1; i < lines.length; i++) {
+    const role = lines[i];
+    const next = lines[i + 1] ?? "";
+    const next2 = lines[i + 2] ?? "";
 
-      const role = lines[0] ?? "";
-      const company = lines[1] ?? "";
-
-      const date = lines.find((l) => /\d{4}|Present|Presente/.test(l)) ?? "";
-      const location = lines.find((l) =>
-        /Italia|Italy|Remote|Hybrid|On-site|Europe|Europa|Toscana|Firenze/i.test(l)
-      ) ?? "";
-
-      const description = lines
-        .filter((l) => l !== role && l !== company && l !== date && l !== location)
-        .join("\n");
-
+    if (
+      role.match(/VP|Director|Manager|Engineer/i) &&
+      next.match(/\d{4}/)
+    ) {
       results.push({
-        company,
-        role,
+        company: cleanExperienceField(sanitizeInlineText(company)),
+        role: cleanExperienceField(sanitizeInlineText(role)),
         employment_type: "",
-        start_date: date,
+        start_date: sanitizeInlineText(next),
         end_date: "",
-        location,
-        description,
-        highlights: splitHighlights(description)
+        location: sanitizeInlineText(next2),
+        description: "",
+        highlights: []
       });
     }
-
-    return dedupeExperience(results);
-  } finally {
-    if (pageWithExp !== page) {
-      await pageWithExp.close().catch(() => null);
-    }
   }
+
+  return dedupeExperience(results).filter(
+    (x) =>
+      x.company &&
+      !x.company.match(/\d+ anni/i) &&
+      x.role &&
+      x.role.length > 3
+  );
 }
 
 // ---------------- EDUCATION ----------------
@@ -341,37 +370,45 @@ async function extractEducation(page: Page): Promise<EducationItem[]> {
     const section = await findSectionByTitle(pageWithEdu, ["Formazione", "Education"]);
     if (!section) return [];
 
-    const items = section.locator("li");
-    const count = Math.min(await items.count(), 8);
+    const raw = await rawTextOrEmpty(section);
+    const lines = cleanLines(splitLines(raw)).filter(
+      (line) => line !== "Formazione" && line !== "Education"
+    );
 
     const results: EducationItem[] = [];
+    let i = 0;
 
-    for (let i = 0; i < count; i++) {
-      const text = await textOrEmpty(items.nth(i));
-      if (!text) continue;
+    while (i < lines.length) {
+      const school = lines[i] ?? "";
+      const degree = lines[i + 1] ?? "";
+      const date = lines[i + 2] ?? "";
 
-      const lines = cleanLines(splitLines(text));
-      if (lines.length < 1) continue;
+      if (school && degree && /\d{4}/.test(date)) {
+        const descriptionLines: string[] = [];
+        let j = i + 3;
 
-      const joined = lines.join(" ").toLowerCase();
-      if (
-        joined.includes("ha diffuso questo post") ||
-        joined.includes("consiglia") ||
-        joined.includes("commenta") ||
-        joined.includes("diffondi il post") ||
-        joined.includes("visualizza offerta di lavoro")
-      ) {
+        while (
+          j < lines.length &&
+          !(lines[j] && lines[j + 1] && /\d{4}/.test(lines[j + 2] ?? ""))
+        ) {
+          descriptionLines.push(lines[j]);
+          j++;
+        }
+
+        results.push({
+          school: sanitizeInlineText(school),
+          degree: sanitizeInlineText(degree),
+          field_of_study: "",
+          start_date: sanitizeInlineText(date),
+          end_date: "",
+          description: normalizeMultilineText(descriptionLines.join("\n"))
+        });
+
+        i = j;
         continue;
       }
 
-      results.push({
-        school: lines[0] ?? "",
-        degree: lines[1] ?? "",
-        field_of_study: lines[2] ?? "",
-        start_date: lines.find((l) => /\d{4}/.test(l)) ?? "",
-        end_date: "",
-        description: lines.slice(3).join("\n")
-      });
+      i++;
     }
 
     return results;
@@ -391,29 +428,24 @@ async function extractSkills(page: Page): Promise<string[]> {
     const section = await findSectionByTitle(pageWithSkills, ["Competenze", "Skills"]);
     if (!section) return [];
 
-    const items = section.locator("li");
-    const count = Math.min(await items.count(), 40);
+    const raw = await rawTextOrEmpty(section);
+    const lines = cleanLines(splitLines(raw)).filter(
+      (line) =>
+        line !== "Competenze" &&
+        line !== "Skills" &&
+        !/^Competenze\s*\(\d+\)$/i.test(line) &&
+        !/^Skills\s*\(\d+\)$/i.test(line) &&
+        !line.includes("Mostra tutto")
+    );
 
-    const skills = new Set<string>();
+    const skills = lines.filter(
+      (line) =>
+        line.length > 1 &&
+        line.length < 100 &&
+        !/commenti|diffusioni|reazioni|post|follower/i.test(line)
+    );
 
-    for (let i = 0; i < count; i++) {
-      const text = await textOrEmpty(items.nth(i));
-      if (!text) continue;
-
-      const lines = cleanLines(splitLines(text));
-      const first = lines[0] ?? "";
-
-      if (
-        first &&
-        first.length > 1 &&
-        first.length < 80 &&
-        !/commenti|diffusioni|reazioni|post|follower/i.test(first)
-      ) {
-        skills.add(first);
-      }
-    }
-
-    return Array.from(skills).slice(0, 30);
+    return Array.from(new Set(skills)).slice(0, 50);
   } finally {
     if (pageWithSkills !== page) {
       await pageWithSkills.close().catch(() => null);
@@ -431,7 +463,7 @@ export async function extractLinkedInProfile(profileUrl: string): Promise<Linked
     await page.goto(profileUrl, { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(2000);
 
-    await autoScrollProfile(page);
+    await autoScrollMain(page);
 
     const root = await getProfileRoot(page);
     const sections = root.locator("section");
@@ -444,6 +476,23 @@ export async function extractLinkedInProfile(profileUrl: string): Promise<Linked
       console.log((txt || "").slice(0, 250));
     }
     console.log("\n=== END DEBUG ===\n");
+
+    console.log("\n=== PROFILE HEADINGS DEBUG ===");
+    const rootAllText = await page.locator("main").first().textContent();
+    console.log("Contains 'Esperienza':", (rootAllText || "").includes("Esperienza"));
+    console.log("Contains 'Formazione':", (rootAllText || "").includes("Formazione"));
+    console.log("Contains 'Competenze':", (rootAllText || "").includes("Competenze"));
+    console.log("\n=== END HEADINGS DEBUG ===\n");
+
+    const expCount = await page.getByText("Esperienza", { exact: true }).count();
+    const eduCount = await page.getByText("Formazione", { exact: true }).count();
+    const skillsCount = await page.getByText("Competenze", { exact: true }).count();
+
+    console.log("Exact Esperienza count:", expCount);
+    console.log("Exact Formazione count:", eduCount);
+    console.log("Exact Competenze count:", skillsCount);
+
+    await debugScrollableContainers(page);
 
     const core = await extractCore(page);
     const about = await extractAbout(page);
@@ -474,4 +523,34 @@ export async function extractLinkedInProfile(profileUrl: string): Promise<Linked
   } finally {
     await context.close().catch(() => null);
   }
+}
+
+async function debugScrollableContainers(page: Page): Promise<void> {
+  const containers = await page.evaluate(() => {
+    const all = Array.from(document.querySelectorAll("*"));
+    return all
+      .map((el) => {
+        const style = window.getComputedStyle(el);
+        const overflowY = style.overflowY;
+        const scrollHeight = (el as HTMLElement).scrollHeight || 0;
+        const clientHeight = (el as HTMLElement).clientHeight || 0;
+        const text = (el.textContent || "").trim().slice(0, 80);
+
+        return {
+          tag: el.tagName,
+          overflowY,
+          scrollHeight,
+          clientHeight,
+          text
+        };
+      })
+      .filter((x) => x.scrollHeight > x.clientHeight + 200)
+      .slice(0, 20);
+  });
+
+  console.log("\n=== SCROLLABLE CONTAINERS DEBUG ===");
+  for (const c of containers) {
+    console.log(c);
+  }
+  console.log("=== END SCROLLABLE CONTAINERS DEBUG ===\n");
 }

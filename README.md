@@ -1,166 +1,115 @@
 # LinkedIn Personal Branding MCP
 
-A local MCP server that uses Playwright to open a LinkedIn profile in a real browser session, extract the visible profile sections, and return a structured JSON payload designed for personal branding analysis.
+## From data to positioning
 
-## What this repo does
+This project is not just a LinkedIn extractor.
 
-- boots a local MCP server over **stdio**
-- uses **Playwright** for browser-driven extraction
-- saves a timestamped JSON export under `exports/`
-- provides a CLI extractor for manual runs
-- includes a simple export comparison script
+It is an experiment to answer a simple question:
 
-## Recommended use
+> Can we turn a professional profile into structured data,  
+> and use that data to drive better positioning, storytelling and leadership communication?
 
-Use this as a **read-only** data feeder for your branding workflow:
+---
 
-1. extract your profile
-2. pass the JSON to ChatGPT
-3. get an audit, rewrite, or positioning review
-4. apply changes manually on LinkedIn
+## 🎯 Why this project exists
 
-## Safety notes
+As leaders grow in their careers, their role changes:
 
-This project is intentionally conservative:
+- from execution → to direction  
+- from delivery → to impact  
+- from expertise → to influence  
 
-- it does **not** write back to LinkedIn
-- it uses a real authenticated browser session saved locally in `state.json`
-- it is meant for occasional personal use, not high-frequency scraping
+Yet, most LinkedIn profiles remain:
+- static  
+- unstructured  
+- underutilized  
 
-You should still review LinkedIn's terms and only use it on your own account and at a human pace.
+This project aims to bridge that gap.
 
-## Prerequisites
+---
 
-- Node.js 18+
+## 🧠 What it does
+
+The MCP (Model Context Pipeline) extracts and structures:
+
+- Profile core (headline, location, about)
+- Career progression (roles, timeline, company)
+- Education
+- Skills
+
+Turning this:
+
+> A visual, human-oriented profile
+
+Into this:
+
+> A structured dataset that can be analyzed, compared, and evolved over time
+
+---
+
+## 🚀 What you can build on top of it
+
+Once your profile is structured, you can:
+
+### 1. Analyze your positioning
+- Career progression clarity
+- Role evolution (Engineer → Manager → Director → VP)
+- Gaps between actual experience and perceived positioning
+
+### 2. Improve your LinkedIn presence
+- Generate stronger headlines
+- Rewrite About sections with strategic focus
+- Align communication with your target role
+
+### 3. Drive your content strategy
+- Identify your core themes
+- Maintain consistency across posts
+- Avoid random or incoherent messaging
+
+### 4. Track evolution over time
+- Compare snapshots of your profile
+- Understand how your positioning evolves
+- Align profile with career moves
+
+---
+
+## 💡 Why this matters (VP perspective)
+
+At senior leadership level, your profile is not a CV.
+
+It is:
+- a positioning tool  
+- a narrative asset  
+- a signal to your ecosystem  
+
+This project treats it as such.
+
+---
+
+## 🏗️ Architecture (high level)
+
+- Playwright-based extraction
+- DOM normalization via `innerText`
+- Text reconstruction (LinkedIn is not structured HTML)
+- Heuristic parsing for:
+  - Experience blocks
+  - Roles and timelines
+  - Skills and education
+
+---
+
+## ⚙️ Technical setup
+
+### Prerequisites
+- Node.js >= 18
 - npm
-- a local desktop session where you can complete LinkedIn login once
+- LinkedIn account (authenticated session required)
 
-## Install
+---
+
+### Installation
 
 ```bash
+git clone https://github.com/Alessandro1981/linkedin-personal-branding-mcp.git
+cd linkedin-personal-branding-mcp
 npm install
-npx playwright install chromium
-cp .env.example .env
-```
-
-Then edit `.env` and set:
-
-```bash
-LINKEDIN_PROFILE_URL=https://www.linkedin.com/in/your-public-slug/
-HEADLESS=false
-```
-
-## First login bootstrap
-
-Run:
-
-```bash
-npm run login
-```
-
-A browser window opens on LinkedIn login.
-
-1. complete login manually
-2. wait until you land on your feed or profile
-3. come back to the terminal and press Enter
-
-This saves the browser session into `state.json`.
-
-## Manual extraction
-
-```bash
-npm run extract -- https://www.linkedin.com/in/your-public-slug/
-```
-
-Or rely on the URL in `.env`:
-
-```bash
-npm run extract
-```
-
-The script writes a file like:
-
-```text
-exports/linkedin_profile_2026-04-18T09-31-22.222Z.json
-```
-
-## Start the MCP server
-
-```bash
-npm run dev
-```
-
-The server exposes one tool:
-
-- `extract_profile`
-
-### Tool input
-
-```json
-{
-  "profile_url": "https://www.linkedin.com/in/your-public-slug/",
-  "save_to_exports": true,
-  "include_recent_posts": true
-}
-```
-
-### Tool output
-
-A structured JSON payload like the example in `examples/profile-template.json`.
-
-## Compare two exports
-
-```bash
-npm run compare -- exports/old.json exports/new.json
-```
-
-This prints a small diff summary, useful to see whether your profile changed over time.
-
-## Repo structure
-
-```text
-src/
-  browser.ts           Playwright browser/context setup
-  config.ts            environment configuration
-  extractor.ts         profile extraction logic
-  extract-cli.ts       run extraction manually
-  index.ts             MCP server entrypoint
-  login.ts             one-time login bootstrap
-  compare-exports.ts   compare two JSON exports
-  types.ts             output schema
-  utils.ts             helpers
-examples/
-  profile-template.json
-exports/
-```
-
-## Known limits
-
-LinkedIn changes markup frequently, so selectors may need adjustment over time. The extractor is designed as a practical starting point, not as a forever-stable connector.
-
-The most reliable sections are usually:
-
-- headline
-- about
-- experience
-- skills
-
-Featured and recent posts are more brittle because their layout changes more often.
-
-## How to use the output with ChatGPT
-
-Once you have an export, upload the JSON here and ask for one of these:
-
-- "Audit my LinkedIn profile for VP-level positioning"
-- "Rewrite my headline and about section"
-- "Check consistency between profile and my recent posts"
-- "Suggest what to add to Featured"
-
-## Next upgrades worth adding
-
-- stronger section-specific selectors
-- markdown export alongside JSON
-- optional screenshots for debugging
-- richer post extraction
-- a lightweight UI
-- versioned branding snapshots
