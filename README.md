@@ -62,11 +62,11 @@ Into this:
 
 ```mermaid
 flowchart LR
-    A[LinkedIn Profile<br/>(unstructured data)] --> B[Extractor Layer<br/>(Playwright)]
-    B --> C[MCP Layer<br/>(cleaning, structuring, parsing)]
-    C --> D[Structured Dataset]
-    D --> E[GPT / LLM]
-    E --> F[Output<br/>(posts, insights, positioning)]
+    A["LinkedIn Profile - unstructured data"] --> B["Extractor Layer - Playwright"]
+    B --> C["MCP Layer - cleaning, structuring, parsing"]
+    C --> D["Structured Dataset"]
+    D --> E["GPT / LLM"]
+    E --> F["Output - posts, insights, positioning"]
 ```
 
 ---
@@ -77,10 +77,10 @@ flowchart LR
 2. Normalize and reconstruct content (LinkedIn DOM is not structured)
 3. Apply heuristic parsing (roles, timeline, skills, etc.)
 4. Build a structured dataset
-5. Feed the dataset into a GPT as **high-quality context**
+5. Feed the dataset into a GPT as high-quality context
 
 👉 The result is not more AI  
-👉 The result is **better AI usage**
+👉 The result is better AI usage
 
 ---
 
@@ -94,55 +94,56 @@ cd linkedin-personal-branding-mcp
 npm install
 ```
 
-### 2. Login (required for LinkedIn access)
+---
+
+### 2. Login
 
 ```bash
 npm run login
 ```
 
-This will create a local authenticated session.
+---
 
-### 3. Extract your profile
+### 3. Extract
 
 ```bash
 npm run extract
 ```
 
-This will generate structured data in:
+Output will be generated in:
 
-```text
+```
 /exports
 ```
 
-### 4. Compare snapshots (optional)
+---
+
+### 4. Compare (optional)
 
 ```bash
 npm run compare
 ```
 
-Useful to track how your positioning evolves over time.
-
 ---
 
 ## 📂 Project structure
 
-```text
+```
 .
 ├── src/
-│   ├── extractor.ts          # extraction logic
-│   ├── extract-cli.ts        # CLI entry point
-│   ├── login.ts              # session handling
-│   ├── compare-exports.ts    # profile comparison
-│   └── ...
-├── exports/                  # structured output data
-├── examples/                 # sample data / experiments
+│   ├── extractor.ts
+│   ├── extract-cli.ts
+│   ├── login.ts
+│   ├── compare-exports.ts
+├── exports/
+├── examples/
 ├── package.json
 └── README.md
 ```
 
 ---
 
-## 📊 Example output (simplified)
+## 📊 Example output
 
 ```json
 {
@@ -160,80 +161,18 @@ Useful to track how your positioning evolves over time.
 
 ---
 
-## 🧩 Using it with GPT (MCP flow)
+## 🧩 Using it with GPT
 
-Once you have structured data:
-
-1. Feed it into your GPT / LLM
-2. Use prompts like:
-   - “Improve my LinkedIn headline”
-   - “Generate a post consistent with my positioning”
-   - “Avoid repeating previous content”
-   - “Align my communication with a VP role”
+- Improve my LinkedIn headline
+- Generate a post consistent with my positioning
+- Avoid repetition
+- Align communication with my target role
 
 ---
 
 ## 💡 Key insight
 
 > More AI does not automatically mean more value.
-
-In many real-world scenarios:
-
-- context quality > model capability
-- structured input > raw data
-- clarity > automation
-
-A partially manual MCP can outperform a fully automated pipeline  
-when the goal is **reliability and real usability**.
-
----
-
-## 🧭 When to use this approach
-
-This pattern works best when:
-
-- you are validating a use case
-- context quality is critical
-- full automation is not yet justified
-- you want fast iteration before scaling
-
----
-
-## ⚖️ What this is (and what it is not)
-
-### ✅ This is:
-
-- a pragmatic experiment
-- a positioning tool
-- a real-world AI adoption pattern
-
-### ❌ This is NOT:
-
-- a production-ready AI platform
-- a fully automated pipeline
-- a scalable architecture (yet)
-
----
-
-## 🔮 Future directions
-
-- partial automation of ingestion
-- API integration
-- multi-use-case expansion
-
-Only after **real value is proven**.
-
----
-
-## 🧠 Final thought
-
-The question is not:
-
-> "How advanced is the technology?"
-
-But:
-
-> "How useful is it in the context where it is applied?"
 
 ---
 
