@@ -24,7 +24,15 @@ Yet, most LinkedIn profiles remain:
 - unstructured  
 - underutilized  
 
-This project aims to bridge that gap.
+At the same time, most GenAI initiatives struggle to scale.
+
+Not because of the model.  
+But because they lack:
+- context  
+- integration  
+- real use cases  
+
+This project sits exactly at that intersection.
 
 ---
 
@@ -36,80 +44,82 @@ The MCP (Model Context Pipeline) extracts and structures:
 - Career progression (roles, timeline, company)
 - Education
 - Skills
+- (optionally) recent content
 
 Turning this:
 
-> A visual, human-oriented profile
+> A visual, human-oriented profile  
 
 Into this:
 
-> A structured dataset that can be analyzed, compared, and evolved over time
-
----
-
-## 🚀 What you can build on top of it
-
-Once your profile is structured, you can:
-
-### 1. Analyze your positioning
-- Career progression clarity
-- Role evolution (Engineer → Manager → Director → VP)
-- Gaps between actual experience and perceived positioning
-
-### 2. Improve your LinkedIn presence
-- Generate stronger headlines
-- Rewrite About sections with strategic focus
-- Align communication with your target role
-
-### 3. Drive your content strategy
-- Identify your core themes
-- Maintain consistency across posts
-- Avoid random or incoherent messaging
-
-### 4. Track evolution over time
-- Compare snapshots of your profile
-- Understand how your positioning evolves
-- Align profile with career moves
-
----
-
-## 💡 Why this matters 
-
-At senior leadership level, your profile is not a CV.
-
-It is:
-- a positioning tool  
-- a narrative asset  
-- a signal to your ecosystem  
-
-This project treats it as such.
+> A structured dataset that can be analyzed, compared, and evolved over time  
 
 ---
 
 ## 🏗️ Architecture (high level)
 
-- Playwright-based extraction
-- DOM normalization via `innerText`
-- Text reconstruction (LinkedIn is not structured HTML)
-- Heuristic parsing for:
-  - Experience blocks
-  - Roles and timelines
-  - Skills and education
+```mermaid
+flowchart LR
+    A[LinkedIn Profile<br/>(unstructured data)] --> B[Extractor Layer<br/>(Playwright)]
+    B --> C[MCP Layer<br/>(cleaning, structuring, parsing)]
+    C --> D[Structured Dataset]
+    D --> E[GPT / LLM]
+    E --> F[Output<br/>(posts, insights, positioning)]
+```
+
+---
+
+## ⚙️ How it works
+
+1. Extract raw data from LinkedIn  
+2. Normalize and reconstruct content (LinkedIn DOM is not structured)  
+3. Apply heuristic parsing (roles, timeline, skills, etc.)  
+4. Build a structured dataset  
+5. Feed the dataset into a GPT as high-quality context  
+
+---
+
+## 💡 Key insight
+
+> More AI does not automatically mean more value.
 
 ---
 
 ## ⚙️ Technical setup
 
 ### Prerequisites
-- Node.js >= 18
-- npm
-- LinkedIn account (authenticated session required)
+
+- Node.js >= 18  
+- npm  
+- LinkedIn account (authenticated session required)  
 
 ---
 
-### Installation
+### 📦 Installation
 
 ```bash
 git clone https://github.com/Alessandro1981/linkedin-personal-branding-mcp.git
 cd linkedin-personal-branding-mcp
 npm install
+```
+
+---
+
+### ▶️ Run the extractor
+
+```bash
+npm run extract
+```
+
+or:
+
+```bash
+npx ts-node src/extract-cli.ts
+```
+
+---
+
+## 👤 Author
+
+Alessandro Bacioccola  
+VP Software Engineering | AI & Digital Platforms | Leadership & Innovation
