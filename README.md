@@ -4,7 +4,7 @@
 
 This project is not just a LinkedIn extractor.
 
-It is an experiment to answer a simple question:
+It is a pragmatic experiment to answer a simple question:
 
 > Can we turn a professional profile into structured data,  
 > and use that data to drive better positioning, storytelling and leadership communication?
@@ -75,27 +75,16 @@ flowchart LR
 2. Normalize and reconstruct content (LinkedIn DOM is not structured)  
 3. Apply heuristic parsing (roles, timeline, skills, etc.)  
 4. Build a structured dataset  
-5. Feed the dataset into a GPT as high-quality context  
+5. Feed the dataset into a GPT as **high-quality context**
+
+👉 The result is not more AI  
+👉 The result is **better AI usage**
 
 ---
 
-## 💡 Key insight
+## 🚀 Quick start
 
-> More AI does not automatically mean more value.
-
----
-
-## ⚙️ Technical setup
-
-### Prerequisites
-
-- Node.js >= 18  
-- npm  
-- LinkedIn account (authenticated session required)  
-
----
-
-### 📦 Installation
+### 1. Install
 
 ```bash
 git clone https://github.com/Alessandro1981/linkedin-personal-branding-mcp.git
@@ -105,17 +94,78 @@ npm install
 
 ---
 
-### ▶️ Run the extractor
+### 2. Login (required for LinkedIn access)
+
+```bash
+npm run login
+```
+
+---
+
+### 3. Extract your profile
 
 ```bash
 npm run extract
 ```
 
-or:
+This will generate structured data in:
+
+/exports
+
+---
+
+### 4. Compare snapshots (optional)
 
 ```bash
-npx ts-node src/extract-cli.ts
+npm run compare
 ```
+
+---
+
+## 📂 Project structure
+
+.
+├── src/
+│   ├── extractor.ts
+│   ├── extract-cli.ts
+│   ├── login.ts
+│   ├── compare-exports.ts
+├── exports/
+├── examples/
+├── package.json
+└── README.md
+
+---
+
+## 📊 Example output (simplified)
+
+{
+  "headline": "VP Software Engineering | AI & Digital Platforms",
+  "experience": [
+    {
+      "role": "VP Software Engineering",
+      "company": "Invenco by GVR",
+      "duration": "2026 - Present"
+    }
+  ],
+  "skills": ["Leadership", "AI", "Software Engineering"]
+}
+
+---
+
+## 🧩 Using it with GPT (MCP flow)
+
+1. Feed structured data into your GPT  
+2. Use prompts like:
+   - Improve my LinkedIn headline
+   - Generate a post consistent with my positioning
+   - Avoid repeating previous content
+
+---
+
+## 💡 Key insight
+
+More AI does not automatically mean more value.
 
 ---
 
