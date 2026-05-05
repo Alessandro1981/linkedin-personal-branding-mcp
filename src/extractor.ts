@@ -315,17 +315,77 @@ async function extractAbout(page: Page): Promise<string> {
 
 // ---------------- EXPERIENCE ----------------
 
+async function expandSeeMoreButtons(root: Locator): Promise<void> {
+  const buttons = root.locator(
+    'button:has-text("Mostra altro"), button:has-text("mostra altro"), button:has-text("See more"), button:has-text("see more")'
+  );
+
+  const count = await buttons.count();
+  for (let i = 0; i < count; i++) {
+    const button = buttons.nth(i);
+    try {
+      if (await button.isVisible()) {
+        await button.click();
+        await button.page().waitForTimeout(250);
+      }
+    } catch {
+      // LinkedIn can re-render the DOM while expanding content.
+    }
+  }
+}
+
+function isExperienceDescriptionNoise(line: string): boolean {
+  const lower = line.toLowerCase();
+
+  if (line === "Esperienza" || line === "Experience") return true;
+  if (lower.includes("mostra altro") || lower.includes("mostra meno")) return true;
+  if (lower.includes("show more") || lower.includes("show less")) return true;
+  if (lower.includes("competenze:")) return true;
+  if (lower.includes("skills:")) return true;
+  if (/^\+?\d+ competenze?/i.test(line)) return true;
+  if (/^\+?\d+ skills?/i.test(line)) return true;
+  if (/conferme? di competenza/i.test(line)) return true;
+  if (/endorsements?/i.test(line)) return true;
+
+  return isNoiseLine(line);
+}
+
+function extractExperienceDetailsFromLines(
+  lines: string[],
+  startIndex: number,
+  nextRoleIndex: number
+): { description: string; highlights: string[] } {
+  const detailStart = startIndex + 3;
+  const detailEnd = nextRoleIndex > -1 ? nextRoleIndex : lines.length;
+
+  const detailLines = cleanLines(lines.slice(detailStart, detailEnd))
+    .filter((line) => !isExperienceDescriptionNoise(line))
+    .filter((line) => !line.match(/^\d{4}/))
+    .filter((line) => !line.match(/^(Firenze|Italia|Toscana|Ibrido|Ibrida|Hybrid|Remote|On-site|In sede)/i))
+    .filter((line) => !line.match(/^A tempo pieno|^Full-time/i));
+
+  const description = normalizeMultilineText(detailLines.join("\n"));
+  const highlights = splitHighlights(description);
+
+  return { description, highlights };
+}
+
 async function extractExperience(page: Page): Promise<ExperienceItem[]> {
   const section = await findSectionByTitle(page, ["Esperienza", "Experience"]);
   if (!section) return [];
+
+  await expandSeeMoreButtons(section);
 
   const raw = await rawTextOrEmpty(section);
 
   const lines = cleanLines(splitLines(raw)).filter(
     (line) =>
       line !== "Esperienza" &&
+      line !== "Experience" &&
       !line.includes("A tempo pieno") &&
-      !line.includes("Ibrida")
+      !line.includes("Full-time") &&
+      !line.includes("Ibrida") &&
+      !line.includes("Hybrid")
   );
 
   console.log("\n=== EXPERIENCE CLEAN ===");
@@ -335,27 +395,38 @@ async function extractExperience(page: Page): Promise<ExperienceItem[]> {
   const results: ExperienceItem[] = [];
 
   const company = lines[0] ?? "";
+  const roleIndexes: number[] = [];
 
   for (let i = 1; i < lines.length; i++) {
     const role = lines[i];
     const next = lines[i + 1] ?? "";
-    const next2 = lines[i + 2] ?? "";
 
     if (
       role.match(/VP|Director|Manager|Engineer/i) &&
       next.match(/\d{4}/)
     ) {
-      results.push({
-        company: cleanExperienceField(sanitizeInlineText(company)),
-        role: cleanExperienceField(sanitizeInlineText(role)),
-        employment_type: "",
-        start_date: sanitizeInlineText(next),
-        end_date: "",
-        location: sanitizeInlineText(next2),
-        description: "",
-        highlights: []
-      });
+      roleIndexes.push(i);
     }
+  }
+
+  for (let r = 0; r < roleIndexes.length; r++) {
+    const i = roleIndexes[r];
+    const role = lines[i];
+    const next = lines[i + 1] ?? "";
+    const next2 = lines[i + 2] ?? "";
+    const nextRoleIndex = roleIndexes[r + 1] ?? -1;
+    const details = extractExperienceDetailsFromLines(lines, i, nextRoleIndex);
+
+    results.push({
+      company: cleanExperienceField(sanitizeInlineText(company)),
+      role: cleanExperienceField(sanitizeInlineText(role)),
+      employment_type: "",
+      start_date: sanitizeInlineText(next),
+      end_date: "",
+      location: sanitizeInlineText(next2),
+      description: details.description,
+      highlights: details.highlights
+    });
   }
 
   return dedupeExperience(results).filter(
