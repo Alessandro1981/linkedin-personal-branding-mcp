@@ -152,6 +152,66 @@ function cleanExperienceField(text: string): string {
     .trim();
 }
 
+function isDateLine(line: string): boolean {
+  return (
+    /\d{4}/.test(line) &&
+    /\b(gen|feb|mar|apr|mag|giu|lug|ago|set|ott|nov|dic|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/i.test(line)
+  );
+}
+
+function isCompanyLine(line: string): boolean {
+  const cleaned = line.trim().toLowerCase();
+
+  if (!cleaned) return false;
+
+  return (
+    cleaned.startsWith("invenco") ||
+    cleaned.startsWith("gilbarco") ||
+    cleaned.startsWith("rcproject") ||
+    cleaned.startsWith("vontier") ||
+    cleaned.includes(" · a contratto") ||
+    cleaned.includes(" · contract")
+  );
+}
+
+function isLocationLine(line: string): boolean {
+  const cleaned = line.trim().toLowerCase();
+
+  return (
+    cleaned.startsWith("firenze") ||
+    cleaned.startsWith("italia") ||
+    cleaned.startsWith("toscana") ||
+    cleaned.includes("ibrido") ||
+    cleaned.includes("ibrida") ||
+    cleaned.includes("hybrid") ||
+    cleaned.includes("remote") ||
+    cleaned.includes("da remoto") ||
+    cleaned.includes("on-site") ||
+    cleaned.includes("in sede")
+  );
+}
+
+function isCompanyDurationLine(line: string): boolean {
+  return /^\d+\s+anni/i.test(line.trim());
+}
+
+function isRoleCandidateLine(line: string): boolean {
+  const cleaned = cleanExperienceField(line).trim();
+  const lower = cleaned.toLowerCase();
+
+  if (!cleaned || cleaned.length < 3) return false;
+  if (cleaned === "… altro") return false;
+  if (isNoiseLine(cleaned)) return false;
+  if (isDateLine(cleaned)) return false;
+  if (isCompanyLine(cleaned)) return false;
+  if (isLocationLine(cleaned)) return false;
+  if (isCompanyDurationLine(cleaned)) return false;
+  if (/responsabilità|fornitori|competenze|skills|clienti interni/i.test(lower)) return false;
+  if (/^\+?\d+\s+(competenz|skills)/i.test(cleaned)) return false;
+
+  return true;
+}
+
 async function getProfileRoot(page: Page): Promise<Locator> {
   return page.locator("main").first();
 }
@@ -334,37 +394,28 @@ async function expandSeeMoreButtons(root: Locator): Promise<void> {
   }
 }
 
+function getRoleDateOffset(lines: string[], roleIndex: number): number {
+  const next = lines[roleIndex + 1] ?? "";
+  const next2 = lines[roleIndex + 2] ?? "";
 
-function isDateLine(line: string): boolean {
-  return (
-    /\d{4}/.test(line) &&
-    /\b(gen|feb|mar|apr|mag|giu|lug|ago|set|ott|nov|dic|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/i.test(line)
-  );
-}
+  // Pattern:
+  // Role
+  // Date
+  // Location
+  if (isDateLine(next)) {
+    return 1;
+  }
 
-function isCompanyLine(line: string): boolean {
-  return /^(invenco|gilbarco|rcproject|vontier)\b/i.test(line.trim());
-}
+  // Pattern:
+  // Role
+  // Company
+  // Date
+  // Location
+  if (isCompanyLine(next) && isDateLine(next2)) {
+    return 2;
+  }
 
-function isLocationLine(line: string): boolean {
-  return /^(firenze|italia|toscana|ibrido|ibrida|hybrid|remote|on-site|in sede)\b/i.test(line.trim());
-}
-
-function isLikelyRoleLine(line: string): boolean {
-  const cleaned = cleanExperienceField(line);
-  const lower = cleaned.toLowerCase();
-
-  if (!cleaned || cleaned.length < 3) return false;
-  if (isNoiseLine(cleaned)) return false;
-  if (isDateLine(cleaned)) return false;
-  if (isCompanyLine(cleaned)) return false;
-  if (isLocationLine(cleaned)) return false;
-  if (/^\d+ anni/i.test(cleaned)) return false;
-  if (/^(responsabilità|fornitori|competenze|skills|clienti interni)\b/i.test(cleaned)) return false;
-  if (lower === "… altro") return false;
-  if (/\+\d+ competenze?/i.test(cleaned)) return false;
-
-  return true;
+  return -1;
 }
 
 function isExperienceDescriptionNoise(line: string): boolean {
@@ -378,10 +429,13 @@ function isExperienceDescriptionNoise(line: string): boolean {
   if (lower.includes("skills:")) return true;
   if (/^\+?\d+ competenze?/i.test(line)) return true;
   if (/^\+?\d+ skills?/i.test(line)) return true;
+  if (isCompanyDurationLine(line)) return true;
+  if (isCompanyLine(line)) return true;
+  if (isDateLine(line)) return true;
+  if (isLocationLine(line)) return true;
+  if (/responsabilità|fornitori|clienti interni/i.test(line) && /competenz/i.test(line)) return true;
   if (/conferme? di competenza/i.test(line)) return true;
   if (/endorsements?/i.test(line)) return true;
-  if (/responsabilità|fornitori|clienti interni/i.test(line) && /\+\d+ competenz/i.test(line)) return true;
-  if (isCompanyLine(line)) return true;
 
   return isNoiseLine(line);
 }
@@ -391,13 +445,13 @@ function extractExperienceDetailsFromLines(
   startIndex: number,
   nextRoleIndex: number
 ): { description: string; highlights: string[] } {
-  const detailStart = startIndex + 3;
+  const roleDateOffset = getRoleDateOffset(lines, startIndex);
+  const safeOffset = roleDateOffset > 0 ? roleDateOffset : 1;
+  const detailStart = startIndex + safeOffset + 2;
   const detailEnd = nextRoleIndex > -1 ? nextRoleIndex : lines.length;
 
   const detailLines = cleanLines(lines.slice(detailStart, detailEnd))
     .filter((line) => !isExperienceDescriptionNoise(line))
-    .filter((line) => !isDateLine(line))
-    .filter((line) => !isLocationLine(line))
     .filter((line) => !line.match(/^A tempo pieno|^Full-time/i));
 
   const description = normalizeMultilineText(detailLines.join("\n"));
@@ -430,14 +484,14 @@ async function extractExperience(page: Page): Promise<ExperienceItem[]> {
 
   const results: ExperienceItem[] = [];
 
-  const company = lines.find((line) => isCompanyLine(line)) ?? lines[0] ?? "";
+  const defaultCompany = lines.find((line) => isCompanyLine(line)) ?? lines[0] ?? "";
   const roleIndexes: number[] = [];
 
-  for (let i = 1; i < lines.length; i++) {
+  for (let i = 0; i < lines.length - 1; i++) {
     const role = lines[i];
-    const next = lines[i + 1] ?? "";
+    const offset = getRoleDateOffset(lines, i);
 
-    if (isLikelyRoleLine(role) && isDateLine(next)) {
+    if (offset > 0 && isRoleCandidateLine(role)) {
       roleIndexes.push(i);
     }
   }
@@ -445,18 +499,24 @@ async function extractExperience(page: Page): Promise<ExperienceItem[]> {
   for (let r = 0; r < roleIndexes.length; r++) {
     const i = roleIndexes[r];
     const role = lines[i];
-    const next = lines[i + 1] ?? "";
-    const next2 = lines[i + 2] ?? "";
+    const roleDateOffset = getRoleDateOffset(lines, i);
+    const safeOffset = roleDateOffset > 0 ? roleDateOffset : 1;
+
+    const companyForRole =
+      safeOffset === 2 ? lines[i + 1] ?? defaultCompany : defaultCompany;
+
+    const startDate = lines[i + safeOffset] ?? "";
+    const location = lines[i + safeOffset + 1] ?? "";
     const nextRoleIndex = roleIndexes[r + 1] ?? -1;
     const details = extractExperienceDetailsFromLines(lines, i, nextRoleIndex);
 
     results.push({
-      company: cleanExperienceField(sanitizeInlineText(company)),
+      company: cleanExperienceField(sanitizeInlineText(companyForRole)),
       role: cleanExperienceField(sanitizeInlineText(role)),
       employment_type: "",
-      start_date: sanitizeInlineText(next),
+      start_date: sanitizeInlineText(startDate),
       end_date: "",
-      location: sanitizeInlineText(next2),
+      location: sanitizeInlineText(location),
       description: details.description,
       highlights: details.highlights
     });
@@ -529,7 +589,6 @@ async function extractEducation(page: Page): Promise<EducationItem[]> {
   }
 }
 
-
 // ---------------- CERTIFICATION ----------------
 
 function cleanCertifications(items: CertificationItem[]): CertificationItem[] {
@@ -570,6 +629,7 @@ function cleanCertifications(items: CertificationItem[]): CertificationItem[] {
     .filter((x): x is CertificationItem => x !== null)
     .filter((x) => x.name.length > 5);
 }
+
 async function extractCertifications(page: Page): Promise<CertificationItem[]> {
   const section = await findSectionByTitle(page, ["Licenze e certificazioni", "Licenses & certifications"]);
   if (!section) return [];
@@ -613,6 +673,7 @@ async function extractCertifications(page: Page): Promise<CertificationItem[]> {
 }
 
 // ---------------- LANGUAGES ----------------
+
 async function extractLanguages(page: Page): Promise<LanguageItem[]> {
   const section = await findSectionByTitle(page, ["Lingue", "Languages"]);
   if (!section) return [];
@@ -823,6 +884,7 @@ export async function extractLinkedInProfile(profileUrl: string): Promise<Linked
     await context.close().catch(() => null);
   }
 }
+
 async function debugScrollableContainers(page: Page): Promise<void> {
   const containers = await page.evaluate(() => {
     const all = Array.from(document.querySelectorAll("*"));
@@ -845,9 +907,9 @@ async function debugScrollableContainers(page: Page): Promise<void> {
       .filter((x) => x.scrollHeight > x.clientHeight + 200)
       .slice(0, 20);
   });
-  
+
   console.log("\n=== SCROLLABLE CONTAINERS DEBUG ===");
-  
+
   for (const c of containers) {
     console.log(c);
   }
