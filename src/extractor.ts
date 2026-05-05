@@ -145,7 +145,7 @@ function cleanLines(lines: string[]): string[] {
 
 function cleanExperienceField(text: string): string {
   return text
-    .replace(/🌐|✔|🛠️|🔍/g, "")
+    .replace(/🌐|✔|🛠️|🔍|🗓️/g, "")
     .replace(/Responsabilità.*$/i, "")
     .replace(/\+\d+ competenze?.*$/i, "")
     .replace(/\d+ anni.*$/i, "")
@@ -334,10 +334,44 @@ async function expandSeeMoreButtons(root: Locator): Promise<void> {
   }
 }
 
+
+function isDateLine(line: string): boolean {
+  return (
+    /\d{4}/.test(line) &&
+    /\b(gen|feb|mar|apr|mag|giu|lug|ago|set|ott|nov|dic|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/i.test(line)
+  );
+}
+
+function isCompanyLine(line: string): boolean {
+  return /^(invenco|gilbarco|rcproject|vontier)\b/i.test(line.trim());
+}
+
+function isLocationLine(line: string): boolean {
+  return /^(firenze|italia|toscana|ibrido|ibrida|hybrid|remote|on-site|in sede)\b/i.test(line.trim());
+}
+
+function isLikelyRoleLine(line: string): boolean {
+  const cleaned = cleanExperienceField(line);
+  const lower = cleaned.toLowerCase();
+
+  if (!cleaned || cleaned.length < 3) return false;
+  if (isNoiseLine(cleaned)) return false;
+  if (isDateLine(cleaned)) return false;
+  if (isCompanyLine(cleaned)) return false;
+  if (isLocationLine(cleaned)) return false;
+  if (/^\d+ anni/i.test(cleaned)) return false;
+  if (/^(responsabilità|fornitori|competenze|skills|clienti interni)\b/i.test(cleaned)) return false;
+  if (lower === "… altro") return false;
+  if (/\+\d+ competenze?/i.test(cleaned)) return false;
+
+  return true;
+}
+
 function isExperienceDescriptionNoise(line: string): boolean {
   const lower = line.toLowerCase();
 
   if (line === "Esperienza" || line === "Experience") return true;
+  if (line === "… altro") return true;
   if (lower.includes("mostra altro") || lower.includes("mostra meno")) return true;
   if (lower.includes("show more") || lower.includes("show less")) return true;
   if (lower.includes("competenze:")) return true;
@@ -346,6 +380,8 @@ function isExperienceDescriptionNoise(line: string): boolean {
   if (/^\+?\d+ skills?/i.test(line)) return true;
   if (/conferme? di competenza/i.test(line)) return true;
   if (/endorsements?/i.test(line)) return true;
+  if (/responsabilità|fornitori|clienti interni/i.test(line) && /\+\d+ competenz/i.test(line)) return true;
+  if (isCompanyLine(line)) return true;
 
   return isNoiseLine(line);
 }
@@ -360,8 +396,8 @@ function extractExperienceDetailsFromLines(
 
   const detailLines = cleanLines(lines.slice(detailStart, detailEnd))
     .filter((line) => !isExperienceDescriptionNoise(line))
-    .filter((line) => !line.match(/^\d{4}/))
-    .filter((line) => !line.match(/^(Firenze|Italia|Toscana|Ibrido|Ibrida|Hybrid|Remote|On-site|In sede)/i))
+    .filter((line) => !isDateLine(line))
+    .filter((line) => !isLocationLine(line))
     .filter((line) => !line.match(/^A tempo pieno|^Full-time/i));
 
   const description = normalizeMultilineText(detailLines.join("\n"));
@@ -394,17 +430,14 @@ async function extractExperience(page: Page): Promise<ExperienceItem[]> {
 
   const results: ExperienceItem[] = [];
 
-  const company = lines[0] ?? "";
+  const company = lines.find((line) => isCompanyLine(line)) ?? lines[0] ?? "";
   const roleIndexes: number[] = [];
 
   for (let i = 1; i < lines.length; i++) {
     const role = lines[i];
     const next = lines[i + 1] ?? "";
 
-    if (
-      role.match(/VP|Director|Manager|Engineer/i) &&
-      next.match(/\d{4}/)
-    ) {
+    if (isLikelyRoleLine(role) && isDateLine(next)) {
       roleIndexes.push(i);
     }
   }
