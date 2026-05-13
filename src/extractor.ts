@@ -200,12 +200,23 @@ function isLinkedInSkillMetadataLine(line: string): boolean {
   const lower = cleaned.toLowerCase();
 
   if (!cleaned) return false;
+
   if (/^\+?\d+\s+(competenz|skills)/i.test(cleaned)) return true;
   if (/\be\s*\+\d+\s+competenz/i.test(lower)) return true;
   if (/\band\s*\+\d+\s+skills/i.test(lower)) return true;
   if (/\+\d+\s+competenz/i.test(lower)) return true;
   if (/\+\d+\s+skills/i.test(lower)) return true;
-  if (/\d+\s+(esperienz|experiences?)\s+presso/i.test(lower)) return true;
+
+  // LinkedIn relationship/context metadata, e.g.:
+  // "4 esperienze presso Invenco e altre 2 aziende"
+  // "4 experiences at Invenco and 2 other companies"
+  if (/\d+\s+esperienze?\s+presso/i.test(lower)) return true;
+  if (/esperienze?\s+presso/i.test(lower)) return true;
+  if (/altre?\s+\d+\s+aziende/i.test(lower)) return true;
+  if (/\d+\s+experiences?\s+at/i.test(lower)) return true;
+  if (/other\s+\d+\s+companies/i.test(lower)) return true;
+  if (/and\s+\d+\s+other\s+companies/i.test(lower)) return true;
+
   if (/confermat[aoe]? da/i.test(lower)) return true;
   if (/conferme? di competenza/i.test(lower)) return true;
   if (/endorsements?/i.test(lower)) return true;
@@ -730,6 +741,76 @@ type FeaturedItem = {
   url: string;
 };
 
+function isUsefulFeaturedUrl(url: string): boolean {
+  const lower = url.toLowerCase();
+
+  if (!url) return false;
+  if (lower.includes("/search/results/all")) return false;
+  if (lower.includes("/details/featured")) return false;
+  if (lower.includes("/feed/hashtag")) return false;
+  if (lower.includes("keywords=%23")) return false;
+
+  return (
+    lower.includes("/feed/update/urn:li:activity:") ||
+    lower.includes("github.com") ||
+    lower.includes("build.microsoft.com") ||
+    lower.includes("linkedin.com/pulse/") ||
+    lower.includes("linkedin.com/posts/")
+  );
+}
+
+function normalizeFeaturedUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+
+    if (parsed.hostname.includes("linkedin.com") && parsed.pathname.includes("/safety/go/")) {
+      const target = parsed.searchParams.get("url");
+      if (target) {
+        return decodeURIComponent(target);
+      }
+    }
+
+    return url;
+  } catch {
+    return url;
+  }
+}
+
+function isFeaturedTitleNoise(line: string): boolean {
+  const lower = line.toLowerCase();
+
+  if (!line || line.length < 4) return true;
+  if (/^(link|collegamento|immagine|documento|post)$/i.test(line)) return true;
+  if (line === "… altro") return true;
+  if (lower.includes("reazioni") || lower.includes("commenti") || lower.includes("diffusioni")) return true;
+  if (lower.includes("mostra traduzione")) return true;
+  if (lower.includes("visualizza offerta")) return true;
+  if (lower.startsWith("http")) return true;
+  if (line.startsWith("#")) return true;
+  if (line.startsWith("- ")) return true;
+  if (line.startsWith("👉")) return true;
+  if (line.startsWith("💡")) return true;
+
+  return false;
+}
+
+function pickFeaturedTitle(lines: string[], fallbackUrl: string): string {
+  const candidates = lines
+    .map((line) => sanitizeInlineText(line))
+    .filter((line) => !isFeaturedTitleNoise(line));
+
+  const strongTitle = candidates.find((line) =>
+    /ai che funziona|decisioni sospese|microsoft build|github|mcp|trappola della matrice/i.test(line)
+  );
+
+  if (strongTitle) return strongTitle;
+
+  const firstReasonable = candidates.find((line) => line.length <= 120);
+  if (firstReasonable) return firstReasonable;
+
+  return fallbackUrl;
+}
+
 async function extractFeatured(page: Page): Promise<FeaturedItem[]> {
   const section = await findSectionByTitle(page, ["In primo piano", "Featured"]);
   if (!section) return [];
@@ -748,35 +829,32 @@ async function extractFeatured(page: Page): Promise<FeaturedItem[]> {
   );
 
   const hrefs = await section.locator("a[href]").evaluateAll((anchors) =>
-    Array.from(new Set(
-      anchors
-        .map((a) => (a as HTMLAnchorElement).href)
-        .filter(Boolean)
-    ))
+    Array.from(
+      new Set(
+        anchors
+          .map((a) => (a as HTMLAnchorElement).href)
+          .filter(Boolean)
+          .map((url) => normalizeFeaturedUrl(url))
+          .filter((url) => isUsefulFeaturedUrl(url))
+      )
+    )
   ).catch(() => [] as string[]);
 
-  const items: FeaturedItem[] = [];
-  const candidateLines = lines.filter(
-    (line) =>
-      line.length > 4 &&
-      !/^(link|collegamento|immagine|documento|post)$/i.test(line)
-  );
+  const itemsByUrl = new Map<string, FeaturedItem>();
 
-  const maxItems = Math.max(candidateLines.length, hrefs.length);
-  for (let i = 0; i < maxItems; i++) {
-    const title = candidateLines[i] ?? hrefs[i] ?? "";
-    const url = hrefs[i] ?? "";
+  for (const url of hrefs) {
+    if (itemsByUrl.has(url)) continue;
 
-    if (!title && !url) continue;
+    const title = pickFeaturedTitle(lines, url);
 
-    items.push({
+    itemsByUrl.set(url, {
       title: sanitizeInlineText(title),
       description: "",
       url
     });
   }
 
-  return items.slice(0, 10);
+  return Array.from(itemsByUrl.values()).slice(0, 10);
 }
 
 // ---------------- RECENT POST ----------------
@@ -857,8 +935,15 @@ function isSkillNoiseLine(line: string): boolean {
   if (line.includes("Mostra tutto") || line.includes("Show all")) return true;
   if (line.includes("Mostra credenziale") || line.includes("Show credential")) return true;
   if (/commenti|diffusioni|reazioni|post|follower/i.test(line)) return true;
+
   if (isLinkedInSkillMetadataLine(line)) return true;
-  if (/\d+\s+(esperienz|experiences?)\s+presso/i.test(lower)) return true;
+
+  if (/\d+\s+esperienze?\s+presso/i.test(lower)) return true;
+  if (/esperienze?\s+presso/i.test(lower)) return true;
+  if (/altre?\s+\d+\s+aziende/i.test(lower)) return true;
+  if (/\d+\s+experiences?\s+at/i.test(lower)) return true;
+  if (/other\s+\d+\s+companies/i.test(lower)) return true;
+
   if (/confermat[aoe]? da/i.test(lower)) return true;
   if (/endorsements?/i.test(lower)) return true;
   if (/^\d+\s+conferme?/i.test(lower)) return true;
@@ -964,6 +1049,7 @@ export async function extractLinkedInProfile(profileUrl: string): Promise<Linked
     console.log("=== END FEATURED DEBUG ===\n");
 
     return {
+      parser_version: "0.2.2",
       ...core,
       profile_core: {
         ...core.profile_core,
