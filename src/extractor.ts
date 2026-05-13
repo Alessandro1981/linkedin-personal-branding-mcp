@@ -195,6 +195,24 @@ function isCompanyDurationLine(line: string): boolean {
   return /^\d+\s+anni/i.test(line.trim());
 }
 
+function isLinkedInSkillMetadataLine(line: string): boolean {
+  const cleaned = line.trim();
+  const lower = cleaned.toLowerCase();
+
+  if (!cleaned) return false;
+  if (/^\+?\d+\s+(competenz|skills)/i.test(cleaned)) return true;
+  if (/\be\s*\+\d+\s+competenz/i.test(lower)) return true;
+  if (/\band\s*\+\d+\s+skills/i.test(lower)) return true;
+  if (/\+\d+\s+competenz/i.test(lower)) return true;
+  if (/\+\d+\s+skills/i.test(lower)) return true;
+  if (/\d+\s+(esperienz|experiences?)\s+presso/i.test(lower)) return true;
+  if (/confermat[aoe]? da/i.test(lower)) return true;
+  if (/conferme? di competenza/i.test(lower)) return true;
+  if (/endorsements?/i.test(lower)) return true;
+
+  return false;
+}
+
 function isRoleCandidateLine(line: string): boolean {
   const cleaned = cleanExperienceField(line).trim();
   const lower = cleaned.toLowerCase();
@@ -206,8 +224,8 @@ function isRoleCandidateLine(line: string): boolean {
   if (isCompanyLine(cleaned)) return false;
   if (isLocationLine(cleaned)) return false;
   if (isCompanyDurationLine(cleaned)) return false;
+  if (isLinkedInSkillMetadataLine(cleaned)) return false;
   if (/responsabilità|fornitori|competenze|skills|clienti interni/i.test(lower)) return false;
-  if (/^\+?\d+\s+(competenz|skills)/i.test(cleaned)) return false;
 
   return true;
 }
@@ -429,6 +447,7 @@ function isExperienceDescriptionNoise(line: string): boolean {
   if (lower.includes("skills:")) return true;
   if (/^\+?\d+ competenze?/i.test(line)) return true;
   if (/^\+?\d+ skills?/i.test(line)) return true;
+  if (isLinkedInSkillMetadataLine(line)) return true;
   if (isCompanyDurationLine(line)) return true;
   if (isCompanyLine(line)) return true;
   if (isDateLine(line)) return true;
@@ -703,7 +722,69 @@ async function extractLanguages(page: Page): Promise<LanguageItem[]> {
   return results.filter((x) => x.name.length > 1);
 }
 
+// ---------------- FEATURED ----------------
+
+type FeaturedItem = {
+  title: string;
+  description: string;
+  url: string;
+};
+
+async function extractFeatured(page: Page): Promise<FeaturedItem[]> {
+  const section = await findSectionByTitle(page, ["In primo piano", "Featured"]);
+  if (!section) return [];
+
+  const raw = await rawTextOrEmpty(section);
+  console.log("\n=== FEATURED RAW ===");
+  console.log(raw.slice(0, 2000));
+  console.log("=== END FEATURED RAW ===\n");
+
+  const lines = cleanLines(splitLines(raw)).filter(
+    (line) =>
+      line !== "In primo piano" &&
+      line !== "Featured" &&
+      !line.includes("Mostra tutto") &&
+      !line.includes("Show all")
+  );
+
+  const hrefs = await section.locator("a[href]").evaluateAll((anchors) =>
+    Array.from(new Set(
+      anchors
+        .map((a) => (a as HTMLAnchorElement).href)
+        .filter(Boolean)
+    ))
+  ).catch(() => [] as string[]);
+
+  const items: FeaturedItem[] = [];
+  const candidateLines = lines.filter(
+    (line) =>
+      line.length > 4 &&
+      !/^(link|collegamento|immagine|documento|post)$/i.test(line)
+  );
+
+  const maxItems = Math.max(candidateLines.length, hrefs.length);
+  for (let i = 0; i < maxItems; i++) {
+    const title = candidateLines[i] ?? hrefs[i] ?? "";
+    const url = hrefs[i] ?? "";
+
+    if (!title && !url) continue;
+
+    items.push({
+      title: sanitizeInlineText(title),
+      description: "",
+      url
+    });
+  }
+
+  return items.slice(0, 10);
+}
+
 // ---------------- RECENT POST ----------------
+
+type PostItem = {
+  text: string;
+  engagement: string;
+};
 
 async function extractRecentPosts(page: Page): Promise<PostItem[]> {
   const section = await findSectionByTitle(page, ["Attività", "Activity"]);
@@ -766,6 +847,25 @@ async function extractRecentPosts(page: Page): Promise<PostItem[]> {
 
 // ---------------- SKILLS ----------------
 
+function isSkillNoiseLine(line: string): boolean {
+  const lower = line.toLowerCase();
+
+  if (!line || line.length < 2) return true;
+  if (line === "Competenze" || line === "Skills") return true;
+  if (/^Competenze\s*\(\d+\)$/i.test(line)) return true;
+  if (/^Skills\s*\(\d+\)$/i.test(line)) return true;
+  if (line.includes("Mostra tutto") || line.includes("Show all")) return true;
+  if (line.includes("Mostra credenziale") || line.includes("Show credential")) return true;
+  if (/commenti|diffusioni|reazioni|post|follower/i.test(line)) return true;
+  if (isLinkedInSkillMetadataLine(line)) return true;
+  if (/\d+\s+(esperienz|experiences?)\s+presso/i.test(lower)) return true;
+  if (/confermat[aoe]? da/i.test(lower)) return true;
+  if (/endorsements?/i.test(lower)) return true;
+  if (/^\d+\s+conferme?/i.test(lower)) return true;
+
+  return false;
+}
+
 async function extractSkills(page: Page): Promise<string[]> {
   const pageWithSkills = await maybeOpenSection(page, "skills");
 
@@ -774,23 +874,19 @@ async function extractSkills(page: Page): Promise<string[]> {
     if (!section) return [];
 
     const raw = await rawTextOrEmpty(section);
-    const lines = cleanLines(splitLines(raw)).filter(
-      (line) =>
-        line !== "Competenze" &&
-        line !== "Skills" &&
-        !/^Competenze\s*\(\d+\)$/i.test(line) &&
-        !/^Skills\s*\(\d+\)$/i.test(line) &&
-        !line.includes("Mostra tutto")
-    );
+    console.log("\n=== SKILLS RAW ===");
+    console.log(raw.slice(0, 2000));
+    console.log("=== END SKILLS RAW ===\n");
 
-    const skills = lines.filter(
-      (line) =>
-        line.length > 1 &&
-        line.length < 100 &&
-        !/commenti|diffusioni|reazioni|post|follower/i.test(line)
-    );
+    const lines = cleanLines(splitLines(raw))
+      .map((line) => sanitizeInlineText(line))
+      .filter((line) => !isSkillNoiseLine(line))
+      .filter((line) => line.length > 1 && line.length < 100)
+      .filter((line) => !isDateLine(line))
+      .filter((line) => !isLocationLine(line))
+      .filter((line) => !isCompanyLine(line));
 
-    return Array.from(new Set(skills)).slice(0, 50);
+    return Array.from(new Set(lines)).slice(0, 50);
   } finally {
     if (pageWithSkills !== page) {
       await pageWithSkills.close().catch(() => null);
@@ -831,15 +927,18 @@ export async function extractLinkedInProfile(profileUrl: string): Promise<Linked
     console.log("Contains 'Esperienza':", (rootAllText || "").includes("Esperienza"));
     console.log("Contains 'Formazione':", (rootAllText || "").includes("Formazione"));
     console.log("Contains 'Competenze':", (rootAllText || "").includes("Competenze"));
+    console.log("Contains 'In primo piano':", (rootAllText || "").includes("In primo piano"));
     console.log("\n=== END HEADINGS DEBUG ===\n");
 
     const expCount = await page.getByText("Esperienza", { exact: true }).count();
     const eduCount = await page.getByText("Formazione", { exact: true }).count();
     const skillsCount = await page.getByText("Competenze", { exact: true }).count();
+    const featuredCount = await page.getByText("In primo piano", { exact: true }).count();
 
     console.log("Exact Esperienza count:", expCount);
     console.log("Exact Formazione count:", eduCount);
     console.log("Exact Competenze count:", skillsCount);
+    console.log("Exact In primo piano count:", featuredCount);
 
     await debugScrollableContainers(page);
 
@@ -850,6 +949,7 @@ export async function extractLinkedInProfile(profileUrl: string): Promise<Linked
     const certifications = await extractCertifications(page);
     const skills = await extractSkills(page);
     const languages = await extractLanguages(page);
+    const featured = await extractFeatured(page);
 
     console.log("\n=== CERTIFICATIONS DEBUG ===");
     console.log(certifications);
@@ -858,6 +958,10 @@ export async function extractLinkedInProfile(profileUrl: string): Promise<Linked
     console.log("\n=== LANGUAGES DEBUG ===");
     console.log(languages);
     console.log("=== END LANGUAGES DEBUG ===\n");
+
+    console.log("\n=== FEATURED DEBUG ===");
+    console.log(featured);
+    console.log("=== END FEATURED DEBUG ===\n");
 
     return {
       ...core,
@@ -877,7 +981,7 @@ export async function extractLinkedInProfile(profileUrl: string): Promise<Linked
       skills,
       certifications,
       languages,
-      featured: [],
+      featured,
       recent_posts,
     };
   } finally {
