@@ -1,6 +1,6 @@
 {
   "name": "linkedin-personal-branding-mcp",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "description": "Local MCP server that reads a LinkedIn profile with Playwright and exports structured JSON for personal branding workflows.",
   "type": "module",

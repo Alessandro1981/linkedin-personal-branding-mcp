@@ -741,24 +741,6 @@ type FeaturedItem = {
   url: string;
 };
 
-function isUsefulFeaturedUrl(url: string): boolean {
-  const lower = url.toLowerCase();
-
-  if (!url) return false;
-  if (lower.includes("/search/results/all")) return false;
-  if (lower.includes("/details/featured")) return false;
-  if (lower.includes("/feed/hashtag")) return false;
-  if (lower.includes("keywords=%23")) return false;
-
-  return (
-    lower.includes("/feed/update/urn:li:activity:") ||
-    lower.includes("github.com") ||
-    lower.includes("build.microsoft.com") ||
-    lower.includes("linkedin.com/pulse/") ||
-    lower.includes("linkedin.com/posts/")
-  );
-}
-
 function normalizeFeaturedUrl(url: string): string {
   try {
     const parsed = new URL(url);
@@ -776,6 +758,37 @@ function normalizeFeaturedUrl(url: string): string {
   }
 }
 
+function isRejectedFeaturedUrl(url: string): boolean {
+  const lower = url.toLowerCase();
+
+  if (!url) return true;
+  if (lower.includes("/search/results/all")) return true;
+  if (lower.includes("/feed/hashtag")) return true;
+  if (lower.includes("keywords=%23")) return true;
+  if (lower.includes("/mynetwork/")) return true;
+  if (lower.includes("/notifications/")) return true;
+  if (lower.includes("/messaging/")) return true;
+
+  return false;
+}
+
+function isUsefulFeaturedUrl(url: string): boolean {
+  const normalized = normalizeFeaturedUrl(url);
+  const lower = normalized.toLowerCase();
+
+  if (isRejectedFeaturedUrl(normalized)) return false;
+
+  return (
+    lower.includes("/feed/update/") ||
+    lower.includes("urn:li:activity:") ||
+    lower.includes("github.com") ||
+    lower.includes("lnkd.in") ||
+    lower.includes("build.microsoft.com") ||
+    lower.includes("linkedin.com/pulse/") ||
+    lower.includes("linkedin.com/posts/")
+  );
+}
+
 function isFeaturedTitleNoise(line: string): boolean {
   const lower = line.toLowerCase();
 
@@ -785,11 +798,12 @@ function isFeaturedTitleNoise(line: string): boolean {
   if (lower.includes("reazioni") || lower.includes("commenti") || lower.includes("diffusioni")) return true;
   if (lower.includes("mostra traduzione")) return true;
   if (lower.includes("visualizza offerta")) return true;
+  if (lower.includes("vedi analisi")) return true;
+  if (lower.includes("invia")) return true;
   if (lower.startsWith("http")) return true;
   if (line.startsWith("#")) return true;
   if (line.startsWith("- ")) return true;
-  if (line.startsWith("👉")) return true;
-  if (line.startsWith("💡")) return true;
+  if (/^https?:\/\//i.test(line)) return true;
 
   return false;
 }
@@ -805,10 +819,25 @@ function pickFeaturedTitle(lines: string[], fallbackUrl: string): string {
 
   if (strongTitle) return strongTitle;
 
-  const firstReasonable = candidates.find((line) => line.length <= 120);
+  const firstReasonable = candidates.find((line) => line.length <= 140);
   if (firstReasonable) return firstReasonable;
 
   return fallbackUrl;
+}
+
+function pickFeaturedTextFallback(lines: string[]): FeaturedItem[] {
+  const candidates = lines
+    .map((line) => sanitizeInlineText(line))
+    .filter((line) => !isFeaturedTitleNoise(line))
+    .filter((line) => line.length <= 160);
+
+  const unique = Array.from(new Set(candidates));
+
+  return unique.slice(0, 5).map((title) => ({
+    title,
+    description: "",
+    url: ""
+  }));
 }
 
 async function extractFeatured(page: Page): Promise<FeaturedItem[]> {
@@ -828,17 +857,31 @@ async function extractFeatured(page: Page): Promise<FeaturedItem[]> {
       !line.includes("Show all")
   );
 
-  const hrefs = await section.locator("a[href]").evaluateAll((anchors) =>
+  const rawHrefs = await section.locator("a[href]").evaluateAll((anchors) =>
     Array.from(
       new Set(
         anchors
           .map((a) => (a as HTMLAnchorElement).href)
           .filter(Boolean)
-          .map((url) => normalizeFeaturedUrl(url))
-          .filter((url) => isUsefulFeaturedUrl(url))
       )
     )
   ).catch(() => [] as string[]);
+
+  console.log("\n=== FEATURED HREFS RAW ===");
+  console.log(rawHrefs);
+  console.log("=== END FEATURED HREFS RAW ===\n");
+
+  const hrefs = Array.from(
+    new Set(
+      rawHrefs
+        .map((url) => normalizeFeaturedUrl(url))
+        .filter((url) => isUsefulFeaturedUrl(url))
+    )
+  );
+
+  console.log("\n=== FEATURED HREFS FILTERED ===");
+  console.log(hrefs);
+  console.log("=== END FEATURED HREFS FILTERED ===\n");
 
   const itemsByUrl = new Map<string, FeaturedItem>();
 
@@ -854,7 +897,13 @@ async function extractFeatured(page: Page): Promise<FeaturedItem[]> {
     });
   }
 
-  return Array.from(itemsByUrl.values()).slice(0, 10);
+  const items = Array.from(itemsByUrl.values()).slice(0, 10);
+
+  if (items.length > 0) {
+    return items;
+  }
+
+  return pickFeaturedTextFallback(lines);
 }
 
 // ---------------- RECENT POST ----------------
@@ -1049,7 +1098,7 @@ export async function extractLinkedInProfile(profileUrl: string): Promise<Linked
     console.log("=== END FEATURED DEBUG ===\n");
 
     return {
-      parser_version: "0.2.2",
+      parser_version: "0.2.3",
       ...core,
       profile_core: {
         ...core.profile_core,
