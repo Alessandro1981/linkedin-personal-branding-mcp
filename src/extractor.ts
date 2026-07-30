@@ -834,8 +834,24 @@ function pickFeaturedTitleFromUrl(url: string): string | null {
     return "La curva del cambiamento: come reagiamo, e come possiamo trasformare la paura in movimento";
   }
 
-  if (lower.includes("github.com")) {
-    return "GitHub - linkedin-personal-branding-mcp";
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+    if (
+      (host === "github.com" || host.endsWith(".github.com")) &&
+      path.includes("linkedin-personal-branding-mcp")
+    ) {
+      return "GitHub - linkedin-personal-branding-mcp";
+    }
+  } catch {
+    // Non-absolute URL or invalid URL: keep a narrow fallback check.
+    if (
+      lower.startsWith("github.com/") &&
+      lower.includes("linkedin-personal-branding-mcp")
+    ) {
+      return "GitHub - linkedin-personal-branding-mcp";
+    }
   }
 
   return null;
