@@ -778,15 +778,25 @@ function isUsefulFeaturedUrl(url: string): boolean {
 
   if (isRejectedFeaturedUrl(normalized)) return false;
 
-  return (
-    lower.includes("/feed/update/") ||
-    lower.includes("urn:li:activity:") ||
-    lower.includes("github.com") ||
-    lower.includes("lnkd.in") ||
-    lower.includes("build.microsoft.com") ||
-    lower.includes("linkedin.com/pulse/") ||
-    lower.includes("linkedin.com/posts/")
-  );
+  if (lower.includes("/feed/update/") || lower.includes("urn:li:activity:")) {
+    return true;
+  }
+
+  try {
+    const parsed = new URL(normalized);
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+    const isHost = (domain: string) => host === domain || host.endsWith(`.${domain}`);
+
+    return (
+      isHost("github.com") ||
+      isHost("lnkd.in") ||
+      isHost("build.microsoft.com") ||
+      (isHost("linkedin.com") && (path.startsWith("/pulse/") || path.startsWith("/posts/")))
+    );
+  } catch {
+    return false;
+  }
 }
 
 function isFeaturedTitleNoise(line: string): boolean {
