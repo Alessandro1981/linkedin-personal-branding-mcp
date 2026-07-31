@@ -810,6 +810,12 @@ function isFeaturedTitleNoise(line: string): boolean {
 
 function pickFeaturedTitleFromUrl(url: string): string | null {
   const lower = url.toLowerCase();
+  let parsedHost: string | null = null;
+  try {
+    parsedHost = new URL(url).hostname.toLowerCase();
+  } catch {
+    // Non-absolute URL or invalid URL.
+  }
 
   if (
     lower.includes("7455141413068955648") ||
@@ -821,7 +827,8 @@ function pickFeaturedTitleFromUrl(url: string): string | null {
   if (
     lower.includes("7457678101402009600") ||
     lower.includes("dQ3gVWxT".toLowerCase()) ||
-    lower.includes("build.microsoft.com")
+    parsedHost === "build.microsoft.com" ||
+    (parsedHost !== null && parsedHost.endsWith(".build.microsoft.com"))
   ) {
     return "Microsoft Build 2026: come cambierà lo sviluppo software?";
   }
